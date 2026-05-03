@@ -155,43 +155,52 @@ import open3d as o3d
 import numpy as np
 import torch
 
-def render_with_open3d(pcd, best_elev, best_azim, H=640, W=640):
-    """
-    pcd_tensor: (N, 3) tensor or numpy array
-    best_elev, best_azim: in degrees
-    """
-    pcd.estimate_normals() # Required for the "clay" / lit look
+def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
+    pcd.estimate_normals()
     
     center = pcd.get_center()
-    extent = pcd.get_max_bound() - pcd.get_min_bound()
+    bbox = pcd.get_axis_aligned_bounding_box()
+    extent = bbox.get_max_bound() - bbox.get_min_bound()
     distance = np.linalg.norm(extent) * 1.5
     
-    # Convert degrees to radians
-    theta = np.radians(90 - best_elev) # Elevation from XY plane
-    phi = np.radians(best_azim + 180)
+    # --- PYTORCH3D TO CARTESIAN CONVERSION ---
+    # PyTorch3D uses:
+    # x = dist * cos(elev) * sin(azim)
+    # y = dist * sin(elev)
+    # z = dist * cos(elev) * cos(azim)
     
-    # Spherical to Cartesian
-    eye = [
-        distance * np.sin(theta) * np.cos(phi) + center[0],
-        distance * np.sin(theta) * np.sin(phi) + center[1],
-        distance * np.cos(theta) + center[2]
-    ]
+    e = np.radians(best_elev)
+    a = np.radians(best_azim)
     
+    # We calculate the eye position relative to the center
+    rel_eye = np.array([
+        distance * np.cos(e) * np.sin(a),
+        distance * np.sin(e),
+        distance * np.cos(e) * np.cos(a)
+    ])
+    
+    eye = center + rel_eye
+    
+    # Orient normals so the "Clay" look works correctly
     pcd.orient_normals_towards_camera_location(camera_location=eye)
     
     render = o3d.visualization.rendering.OffscreenRenderer(W, H)
     
+    # "Clay" Material setup
     material = o3d.visualization.rendering.MaterialRecord()
     material.shader = "defaultLit"
     material.base_color = [0.7, 0.7, 0.7, 1.0]
-    material.base_roughness = 0.5 
+    material.base_roughness = 0.5
     material.base_metallic = 0.0
+    material.point_size = 5.0  # Adjust this float for thickness
+    
     
     render.scene.add_geometry("pcd", pcd, material)
-    render.scene.set_background([0, 0, 0, 1]) # Black background
+    render.scene.set_background([0, 0, 0, 1]) 
     
-    # vertical_field_of_view, center, eye, up
-    render.setup_camera(60.0, center, eye, [0, 1, 0])
+    # setup_camera(fov, center, eye, up)
+    # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
+    render.setup_camera(30.0, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
