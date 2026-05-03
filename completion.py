@@ -25,6 +25,133 @@ model_cache_dir = './ckpts/'
 os.makedirs(model_cache_dir, exist_ok=True)
 
 
+def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.5, area_w=1.0):
+    W = H = 512
+    renderer = o3d.visualization.rendering.OffscreenRenderer(W, H)
+    material = o3d.visualization.rendering.MaterialRecord()
+    # material.shader = "defaultLit"
+    material.shader = "defaultUnlit"
+    material.base_color = [0.7, 0.7, 0.7, 1.0]
+    material.point_size = 5.0
+    renderer.scene.add_geometry("pcd", pcd, material)
+    renderer.scene.set_background([0, 0, 0, 1])
+
+    center = pcd.get_center()
+    bbox = pcd.get_axis_aligned_bounding_box()
+    extent = bbox.get_max_bound() - bbox.get_min_bound()
+    distance = np.linalg.norm(extent) * 1.5
+    
+    # Conversion to torch for the point calculations (Chamfer/Pose)
+    points_pt = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
+
+    startv, endv = -80.0, 80.0
+    starth, endh = -180.0, 180.0
+    num = 50 
+    best_final_elev, best_final_azim = 0.0, 0.0
+
+    for j in range(2):
+        vers = torch.linspace(startv, endv, num)
+        hors = torch.linspace(starth, endh, num)
+        verss, horss = torch.meshgrid(vers, hors, indexing='ij')
+        verss, horss = verss.flatten(), horss.flatten()
+        
+        best_loss = float('inf')
+        
+        for i in tqdm(range(len(verss)), desc="Finding canonical..."):
+            elev_deg = verss[i].item()
+            azim_deg = horss[i].item()
+            
+            e = np.radians(elev_deg)
+            a = np.radians(azim_deg)
+            
+            rel_eye = np.array([
+                distance * np.cos(e) * np.sin(a),
+                distance * np.sin(e),
+                distance * np.cos(e) * np.cos(a)
+            ])
+            eye = center + rel_eye
+            
+            renderer.setup_camera(30.0, center, eye, [0, 1, 0])
+            
+            # Render Depth and Image
+            # render_to_depth_image(z_in_view_space=True) gives us actual distance
+            depth_o3d = renderer.render_to_depth_image(z_in_view_space=True)
+            depth_np = np.asarray(depth_o3d)
+            
+            # Mask for valid points (Open3D depth is 0.0 for background usually)
+            # valid_mask = depth_np > 0
+            valid_mask = (depth_np > 0) & (np.isfinite(depth_np))
+            
+            
+            if np.any(valid_mask):
+                # Edge Score (Canny)
+                d_min = depth_np[valid_mask].min()
+                d_max = depth_np[valid_mask].max()
+                
+                # Check if there's actually a range to normalize
+                if d_max > d_min:
+                    d_norm = (depth_np - d_min) / (d_max - d_min)
+                    # Keep background at 0 or 1 depending on preference; 
+                    # here we clip and clear invalid values
+                    d_norm[~valid_mask] = 0 
+                else:
+                    # If all depth values are the same, the image is a solid block
+                    d_norm = np.zeros_like(depth_np)
+                    d_norm[valid_mask] = 1.0
+
+                # d_img = (np.clip(d_norm, 0, 1) * 255).astype(np.uint8)
+                # channel = (valid_mask*255).astype(np.uint8)
+                # d_img = np.dstack((channel, channel, channel))
+                
+                
+                edges = cv.Canny(d_img, 50, 150)
+                contours, _ = cv.findContours(edges, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+                edge_score = len(contours)
+                
+                # Pose Regularization (Using Torch)
+                eye_pt = torch.from_numpy(eye).float().cuda()
+                posedist = torch.norm(eye_pt - points_pt, dim=-1).mean().item()
+                
+                # 3. Fidelity / CD 
+                # Note: Full CD is slow in a 50k loop on CPU. 
+                # If accuracy is more important than speed, keep your knn_points check here.
+                # Since we don't have 'visible_indices' directly from fragments, 
+                # we assume "lower posedist + high edges" covers the POV quality.
+                                    # Chamfer-like fidelity
+                # dists, _, _ = knn_points(points.unsqueeze(0), visible_pts.unsqueeze(0), K=1)
+                # fixed_cd = dists.squeeze().sqrt().mean()
+                
+                # Add this to your loop to replace fixed_cd
+                loss = (pose_w * posedist) + (contour_w * edge_score)
+                
+                valid_pixel_count = np.sum(valid_mask)
+                # Normalize it against the total image area (W * H)
+                area_score = valid_pixel_count / (W * H)
+
+                # Subtract area_score because we want to MAXIMIZE visible area, but MINIMIZE loss
+                loss = (pose_w * posedist) + (contour_w * edge_score) - (area_w * area_score)
+                print(f"posedist{posedist}, edge_score{edge_score}, area{area_score}")
+                
+                if loss < best_loss:
+                    best_loss = loss
+                    best_elev = elev_deg
+                    best_azim = azim_deg
+                    best_depth = d_img
+        
+        # Hierarchical refinement
+        interv = (endv - startv) / num
+        interh = (endh - starth) / num
+        startv, endv = best_elev - interv, best_elev + interv
+        starth, endh = best_azim - interh, best_azim + interh
+        best_final_elev, best_final_azim = best_elev, best_azim
+        
+    cv.imwrite("bestdepth.png", d_img)
+
+    print(f"Optimal POV -> Azim: {best_final_azim:.1f}, Elev: {best_final_elev:.1f}")
+    return best_final_elev, best_final_azim
+
+
+
 # def find_best_reference_pov_full(pcd, pose_w=0.5, edge_w=0.1):
 #     """
 #     Combines COMPC (Chamfer Distance + Depth Regularization) 
@@ -49,114 +176,113 @@ os.makedirs(model_cache_dir, exist_ok=True)
 #         bin_size=0
 #     )
 
-#     startv, endv = -80.0, 80.0
-#     starth, endh = -180.0, 180.0
-#     num = 50 
-#     # num = 20 
-#     # num = 40 
-#     batch_size = 16
-#     best_final_elev, best_final_azim = 0.0, 0.0
+    startv, endv = -80.0, 80.0
+    starth, endh = -180.0, 180.0
+    num = 50 
+    # num = 20 
+    # num = 40 
+    batch_size = 16
+    best_final_elev, best_final_azim = 0.0, 0.0
 
-#     for j in range(2):
-#         vers = torch.linspace(startv, endv, num, device=device)
-#         hors = torch.linspace(starth, endh, num, device=device)
-#         verss, horss = torch.meshgrid(vers, hors, indexing='ij')
-#         verss, horss = verss.flatten(), horss.flatten()
+    for j in range(2):
+        vers = torch.linspace(startv, endv, num, device=device)
+        hors = torch.linspace(starth, endh, num, device=device)
+        verss, horss = torch.meshgrid(vers, hors, indexing='ij')
+        verss, horss = verss.flatten(), horss.flatten()
         
-#         best_loss = float('inf')
-#         best_elev, best_azim = 0.0, 0.0
-#         best_img_to_save = None
+        best_loss = float('inf')
+        best_elev, best_azim = 0.0, 0.0
+        best_img_to_save = None
         
-#         for i in range(0, len(verss), batch_size):
-#             chunk_elevs = verss[i:i+batch_size]
-#             chunk_azims = horss[i:i+batch_size]
+        for i in range(0, len(verss), batch_size):
+            chunk_elevs = verss[i:i+batch_size]
+            chunk_azims = horss[i:i+batch_size]
             
-#             R, T = look_at_view_transform(dist=distance, elev=chunk_elevs, azim=chunk_azims, device=device, at=bbox_center.unsqueeze(0))
-#             cameras = PerspectiveCameras(device=device, R=R, T=T)
-#             # cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=30.0)
+            R, T = look_at_view_transform(dist=distance, elev=chunk_elevs, azim=chunk_azims, device=device, at=bbox_center.unsqueeze(0))
+            cameras = PerspectiveCameras(device=device, R=R, T=T)
+            # cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=30.0)
             
-#             rasterizer = PointsRasterizer(cameras=cameras, raster_settings=raster_settings)
+            rasterizer = PointsRasterizer(cameras=cameras, raster_settings=raster_settings)
             
-#             pcd_batch = pcd.extend(len(chunk_elevs))
-#             fragments = rasterizer(pcd_batch)
+            pcd_batch = pcd.extend(len(chunk_elevs))
+            fragments = rasterizer(pcd_batch)
             
-#             depth_maps = fragments.zbuf[..., 0] 
-#             idx_map = fragments.idx[..., 0] 
-#             cam_centers = cameras.get_camera_center() 
+            depth_maps = fragments.zbuf[..., 0] 
+            idx_map = fragments.idx[..., 0] 
+            cam_centers = cameras.get_camera_center() 
             
-#             for b in range(len(chunk_elevs)):
-#                 valid_mask = idx_map[b] != -1
-#                 visible_indices = torch.unique(idx_map[b][valid_mask])
+            for b in range(len(chunk_elevs)):
+                valid_mask = idx_map[b] != -1
+                visible_indices = torch.unique(idx_map[b][valid_mask])
                 
-#                 if len(visible_indices) > 0:
-#                     visible_indices = visible_indices % total_points
-#                     visible_pts = points[visible_indices] 
+                if len(visible_indices) > 0:
+                    visible_indices = visible_indices % total_points
+                    visible_pts = points[visible_indices] 
                     
-#                     # Chamfer-like fidelity
-#                     dists, _, _ = knn_points(points.unsqueeze(0), visible_pts.unsqueeze(0), K=1)
-#                     fixed_cd = dists.squeeze().sqrt().mean() 
+                    # Chamfer-like fidelity
+                    dists, _, _ = knn_points(points.unsqueeze(0), visible_pts.unsqueeze(0), K=1)
+                    fixed_cd = dists.squeeze().sqrt().mean() 
                     
-#                     # Pose distance regularization
-#                     posedist = (cam_centers[b].unsqueeze(0) - points).square().sum(-1).sqrt().mean()
+                    # Pose distance regularization
+                    posedist = (cam_centers[b].unsqueeze(0) - points).square().sum(-1).sqrt().mean()
                     
-#                     d_map = depth_maps[b].clone()
-#                     max_val = d_map[valid_mask].max() if valid_mask.any() else 1.0
-#                     d_map[~valid_mask] = max_val * 1.2
+                    d_map = depth_maps[b].clone()
+                    max_val = d_map[valid_mask].max() if valid_mask.any() else 1.0
+                    d_map[~valid_mask] = max_val * 1.2
                     
-#                     # Normalize for CV
-#                     d_min, d_max = d_map.min(), d_map.max()
-#                     d_norm = (d_map - d_min) / (d_max - d_min + 1e-6)
-#                     d_img = (d_norm.cpu().numpy() * 255).astype(np.uint8)
+                    # Normalize for CV
+                    d_min, d_max = d_map.min(), d_map.max()
+                    d_norm = (d_map - d_min) / (d_max - d_min + 1e-6)
+                    d_img = (d_norm.cpu().numpy() * 255).astype(np.uint8)
                     
-#                     edges = cv.Canny(d_img, 50, 150)
-#                     contours, _ = cv.findContours(edges, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-#                     edge_score = len(contours)
+                    edges = cv.Canny(d_img, 50, 150)
+                    contours, _ = cv.findContours(edges, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+                    edge_score = len(contours)
                     
-#                     # fixed_cd: completeness, posedist: closeness, edge_score: topology
-#                     loss = fixed_cd + (pose_w * posedist) + (edge_w * edge_score)
-#                     # print(f"FIXCD {fixed_cd} posedist {posedist} edgescore {edge_score}")
-#                 else:
-#                     loss = torch.tensor(float('inf'))
+                    # fixed_cd: completeness, posedist: closeness, edge_score: topology
+                    loss = fixed_cd + (pose_w * posedist) + (edge_w * edge_score)
+                    # print(f"FIXCD {fixed_cd} posedist {posedist} edgescore {edge_score}")
+                else:
+                    loss = torch.tensor(float('inf'))
                 
-#                 if loss < best_loss:
-#                     best_loss = loss
-#                     best_elev = chunk_elevs[b].item()
-#                     best_azim = chunk_azims[b].item()
+                if loss < best_loss:
+                    best_loss = loss
+                    best_elev = chunk_elevs[b].item()
+                    best_azim = chunk_azims[b].item()
                     
-#                     # Prepare debug image (convert to BGR for colorful contours)
-#                     # import random
-#                     # color_img = cv.cvtColor(d_img, cv.COLOR_GRAY2BGR)
-#                     # for cnt in contours:
-#                     #     cv.drawContours(color_img, [cnt], -1, (random.randint(0,255), 
-#                     #                                           random.randint(0,255), 
-#                     #                                           random.randint(0,255)), 1)
-#                     # best_img_to_save = color_img
+                    # Prepare debug image (convert to BGR for colorful contours)
+                    # import random
+                    # color_img = cv.cvtColor(d_img, cv.COLOR_GRAY2BGR)
+                    # for cnt in contours:
+                    #     cv.drawContours(color_img, [cnt], -1, (random.randint(0,255), 
+                    #                                           random.randint(0,255), 
+                    #                                           random.randint(0,255)), 1)
+                    # best_img_to_save = color_img
             
-#             del pcd_batch, fragments, cameras, rasterizer
-#             torch.cuda.empty_cache() 
+            del pcd_batch, fragments, cameras, rasterizer
+            torch.cuda.empty_cache() 
 
-#         # Hierarchical search update
-#         interv = (endv - startv) / num
-#         interh = (endh - starth) / num
-#         startv, endv = best_elev - interv, best_elev + interv
-#         starth, endh = best_azim - interh, best_azim + interh
-#         best_final_elev, best_final_azim = best_elev, best_azim
+        # Hierarchical search update
+        interv = (endv - startv) / num
+        interh = (endh - starth) / num
+        startv, endv = best_elev - interv, best_elev + interv
+        starth, endh = best_azim - interh, best_azim + interh
+        best_final_elev, best_final_azim = best_elev, best_azim
         
-#         # if best_img_to_save is not None:
-#         #     cv.imwrite(os.path.join(
-#         #                 renders_dir, f"combined-{j}-{best_elev:.1f}-{best_azim:.1f}.jpg")
-#         #                ,
-#         #                best_img_to_save)
+        # if best_img_to_save is not None:
+        #     cv.imwrite(os.path.join(
+        #                 renders_dir, f"combined-{j}-{best_elev:.1f}-{best_azim:.1f}.jpg")
+        #                ,
+        #                best_img_to_save)
 
-#     print(f"Optimal POV Found -> Azimuth: {best_final_azim:.1f}°, Elevation: {best_final_elev:.1f}°")
-#     return best_final_elev, best_final_azim
+    print(f"Optimal POV Found -> Azimuth: {best_final_azim:.1f}°, Elevation: {best_final_elev:.1f}°")
+    return best_final_elev, best_final_azim
 
 import open3d as o3d
 import numpy as np
 import torch
 
 def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
-    pcd.estimate_normals()
     
     center = pcd.get_center()
     bbox = pcd.get_axis_aligned_bounding_box()
@@ -249,21 +375,18 @@ if __name__ == "__main__":
     
     print("LOADING PCD;")
     partial_pcd = o3d.io.read_point_cloud(os.path.join(dataset_path, "indata", object))
-    # R = partial_pcd.get_rotation_matrix_from_xyz((np.pi / 2, np.pi/2, 0))
-    # partial_pcd.rotate(R, center=(0, 0, 0))
-    
-    
-    
+    partial_pcd.estimate_normals()
+
     angles = {
         "stanford-bunny.ply": (12.016324043273926, -129.30612182617188),
         "cow.ply": (10.44897747039795,-2.3510241508483887),
     }
     
     # print("FIND AZIM/ELEV;")
-    if object in angles:
-        best_elev, best_azim = angles[object]
-    else:
-        best_elev, best_azim = find_best_reference_pov_full(partial_pcd)
+    # if object in angles:
+    #     best_elev, best_azim = angles[object]
+    # else:
+    best_elev, best_azim = get_canonical_angles(partial_pcd)
     
     # best_elev = 12.016324043273926
     # best_azim = -129.30612182617188
