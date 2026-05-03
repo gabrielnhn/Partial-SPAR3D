@@ -21,9 +21,14 @@ pip install -r requirements.txt --no-build-isolation
 pip install -r requirements-remesh.txt
 pip install flet==0.21.2
 pip install "pyglet<2"
+pip install open3d
 ```
 
 ### Manual Inference
+
+* Before runnning complete.py:
+export XDG_SESSION_TYPE=x11
+
 
 ```sh
 python3 run.py demo_files/examples/fish.png --output-dir output/ --low-vram-mode
