@@ -24,10 +24,6 @@ device = "cuda"
 model_cache_dir = './ckpts/'
 os.makedirs(model_cache_dir, exist_ok=True)
 
-# renders_dir = os.path.join("renders", path_append)
-renders_dir = "renders"
-if not os.path.isdir(renders_dir):
-    os.mkdir(renders_dir)    
 
 # def find_best_reference_pov_full(pcd, pose_w=0.5, edge_w=0.1):
 #     """
@@ -172,7 +168,7 @@ def render_with_open3d(pcd, best_elev, best_azim, H=640, W=640):
     
     # Convert degrees to radians
     theta = np.radians(90 - best_elev) # Elevation from XY plane
-    phi = np.radians(best_azim)
+    phi = np.radians(best_azim + 180)
     
     # Spherical to Cartesian
     eye = [
@@ -180,6 +176,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=640, W=640):
         distance * np.sin(theta) * np.sin(phi) + center[1],
         distance * np.cos(theta) + center[2]
     ]
+    
+    pcd.orient_normals_towards_camera_location(camera_location=eye)
     
     render = o3d.visualization.rendering.OffscreenRenderer(W, H)
     
@@ -193,7 +191,7 @@ def render_with_open3d(pcd, best_elev, best_azim, H=640, W=640):
     render.scene.set_background([0, 0, 0, 1]) # Black background
     
     # vertical_field_of_view, center, eye, up
-    render.setup_camera(30.0, center, eye, [0, 0, 1])
+    render.setup_camera(60.0, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
@@ -204,8 +202,7 @@ def get_reference_image(pcd, best_elev, best_azim):
     print("Rendering PyTorch3D Reference Image and Depth...")
     
     img, depth = render_with_open3d(pcd, best_elev, best_azim)
-    o3d.io.write_image("RENDER-pre.png", img)
-    
+    return img
     
     # Unpack both the images and the depth tensor
     # batched_imgs.save(os.path.join(renders_dir, "REFERENCE-pre.png"))
@@ -224,140 +221,28 @@ def get_reference_image(pcd, best_elev, best_azim):
     
     # return best_pov_image
     
-    
-def get_mv_images(canonical_img):
-    # Remove background
-    # raw_img = Image.open(input_image_path)
-    no_bg_img = rembg.remove(canonical_img)
-
-    # Paste onto a PURE WHITE background (CRITICAL FOR INSTANTMESH)
-    white_bg = Image.new("RGBA", no_bg_img.size, "WHITE")
-    white_bg.paste(no_bg_img, (0, 0), mask=no_bg_img)
-    processed_image = white_bg.convert("RGB")
-    processed_image = processed_image.resize((320, 320)) # Ensure standard size
-
-    if CANON_ONLY:
-        return None, processed_image
-
-    generator = torch.Generator(device=device).manual_seed(42)
-
-    pipeline = DiffusionPipeline.from_pretrained(
-        "sudo-ai/zero123plus-v1.2", 
-        custom_pipeline="sudo-ai/zero123plus-pipeline",
-        torch_dtype=torch.float16,
-    )
-    # pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
-    pipeline.scheduler = EulerDiscreteScheduler.from_config(
-        pipeline.scheduler.config, timestep_spacing='trailing'
-    )
-
-    # Load the custom white-background UNet from InstantMesh authors
-    unet_ckpt_path = hf_hub_download(repo_id="TencentARC/InstantMesh",
-                                    filename="diffusion_pytorch_model.bin",
-                                    repo_type="model",
-                                    cache_dir=model_cache_dir)
-
-    pipeline.unet.load_state_dict(torch.load(unet_ckpt_path, map_location='cpu'), strict=True)
-    pipeline = pipeline.to(device)
-
-    print("Zero123++...")
-    z123_image = pipeline(
-        processed_image,
-        num_inference_steps=50, 
-        guidance_scale=7.5,
-        generator=generator,
-        # prompt="high quality, clay material, complete",
-        # negative_prompt="complex, detailed, chaotic, asymmetric, text, logo",
-    ).images[0]
-    z123_image.save(os.path.join(renders_dir, "MV.png"))
-    
-    del pipeline
-    gc.collect()
-    torch.cuda.empty_cache()
-    return z123_image, processed_image
-
-
-def get_imesh_triplane(
-    mv_image,
-    processed_canonical_image,
-    best_elev,
-    best_azim,
-):
-    
-    if not CANON_ONLY:
-        # Convert the 960x640 grid directly into a [6, 3, 320, 320] tensor using einops (Zero cropping mistakes!)
-        images_arr = np.asarray(mv_image, dtype=np.float32) / 255.0
-        images_tensor = torch.from_numpy(images_arr).permute(2, 0, 1).contiguous()
-        images_tensor = rearrange(images_tensor, 'c (n h) (m w) -> (n m) c h w', n=3, m=2)
-        # Batch it and cast to FP16
-        image_tensor = images_tensor.unsqueeze(0).to(device, dtype=torch.float16)
-        cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0).to(device, dtype=torch.float16)
-
-    canon_arr = np.asarray(processed_canonical_image, dtype=np.float32) / 255.0
-    canon_tensor = torch.from_numpy(canon_arr).permute(2, 0, 1).contiguous()
-    canon_tensor = canon_tensor.unsqueeze(0).unsqueeze(0).to(device, dtype=torch.float16) # [1, 1, 3, 320, 320]
-
-    canon_c2w = spherical_camera_pose(np.array([0.0]), np.array([0.0]), radius=4.0)
-    canon_c2w = canon_c2w.float().flatten(-2) # [1, 16]
-    canon_K = FOV_to_intrinsics(60.0).unsqueeze(0).float().flatten(-2) # [1, 9]
-
-    # Combine Extrinsics and Intrinsics exactly like InstantMesh does
-    canon_ext = canon_c2w[:, :12]
-    canon_int = torch.stack([canon_K[:, 0], canon_K[:, 4], canon_K[:, 2], canon_K[:, 5]], dim=-1)
-    canon_cam = canon_cam.unsqueeze(0).to(device, dtype=torch.float16) # [1, 1, 16]
-    canon_cam = torch.cat([canon_ext, canon_int], dim=-1)
-
-    # # Append to the Zero123++ cameras
-    if CANON_ONLY:
-        image_tensor = canon_tensor
-        cameras = canon_cam
-    else:
-        image_tensor = torch.cat([image_tensor, canon_tensor], dim=1) # Now [1, 7, 3, 320, 320]
-        cameras = torch.cat([cameras, canon_cam], dim=1) # Now [1, 7, 16]
-
-    print("Loading InstantMesh...")
-    model_ckpt_path = hf_hub_download(
-        repo_id="TencentARC/InstantMesh",
-        filename="instant_mesh_base.ckpt",
-        repo_type="model",
-        cache_dir=model_cache_dir
-    )
-    
-    model = models.lrm_mesh.InstantMesh(grid_res=64)
-    state_dict = torch.load(model_ckpt_path, map_location='cpu', weights_only=True)['state_dict']
-    state_dict = {k[14:]: v for k, v in state_dict.items() if k.startswith('lrm_generator.') and 'source_camera' not in k}
-    model.load_state_dict(state_dict, strict=True)
-
-    model = model.to(device, dtype=torch.float16)
-    model.init_flexicubes_geometry(device)
-
-    with torch.inference_mode():
-        planes = model.forward_planes(image_tensor, cameras)
-        torch.cuda.empty_cache()
-        mesh_v, mesh_f, _, _, _, _ = model.get_geometry_prediction(planes)
-        vertices = mesh_v[0]
-
-    points = vertices.detach().cpu().numpy()
-    return points
-
-
 import open3d as o3d
 
 if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
     # object = "horse.ply"
-    # object = "stanford-bunny.ply"
-    object = "cow.ply"
+    object = "stanford-bunny.ply"
+    # object = "cow.ply"
     
+    renders_dir = "renders"
+    if not os.path.isdir(renders_dir):
+        os.mkdir(renders_dir)    
+
     renders_dir = os.path.join(renders_dir, object.split(".")[0])
     if not os.path.isdir(renders_dir):
         os.mkdir(renders_dir)
     
     print("LOADING PCD;")
-    # partial_pcd = load_ply_to_pytorch3d(os.path.join(dataset_path, "indata", object),
-                                        # normal_factor=5)
     partial_pcd = o3d.io.read_point_cloud(os.path.join(dataset_path, "indata", object))
+    # R = partial_pcd.get_rotation_matrix_from_xyz((np.pi / 2, np.pi/2, 0))
+    # partial_pcd.rotate(R, center=(0, 0, 0))
+    
     
     
     angles = {
@@ -376,5 +261,6 @@ if __name__ == "__main__":
 
     print("GET BEST RGB;")
     canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
+    o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
     
     
