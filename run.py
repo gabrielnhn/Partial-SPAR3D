@@ -157,7 +157,8 @@ if __name__ == "__main__":
         image = images[i : i + args.batch_size]
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
-        with torch.no_grad():
+        # with torch.no_grad():
+        with torch.inference_mode():
             with (
                 torch.autocast(device_type=device, dtype=torch.bfloat16)
                 if "cuda" in device
