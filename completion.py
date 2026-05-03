@@ -25,22 +25,24 @@ model_cache_dir = './ckpts/'
 os.makedirs(model_cache_dir, exist_ok=True)
 
 
-def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.5, area_w=1.0):
+def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     W = H = 512
     renderer = o3d.visualization.rendering.OffscreenRenderer(W, H)
     material = o3d.visualization.rendering.MaterialRecord()
     # material.shader = "defaultLit"
     material.shader = "defaultUnlit"
     material.base_color = [0.7, 0.7, 0.7, 1.0]
-    material.point_size = 5.0
+    material.point_size = 7.0
     renderer.scene.add_geometry("pcd", pcd, material)
     renderer.scene.set_background([0, 0, 0, 1])
 
     center = pcd.get_center()
     bbox = pcd.get_axis_aligned_bounding_box()
     extent = bbox.get_max_bound() - bbox.get_min_bound()
-    distance = np.linalg.norm(extent) * 1.5
-    
+    # distance = np.linalg.norm(extent) * 1.5
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.75
+
     # Conversion to torch for the point calculations (Chamfer/Pose)
     points_pt = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
 
@@ -71,7 +73,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.5, area_w=1.0):
             ])
             eye = center + rel_eye
             
-            renderer.setup_camera(30.0, center, eye, [0, 1, 0])
+            renderer.setup_camera(60.0, center, eye, [0, 1, 0])
             
             # Render Depth and Image
             # render_to_depth_image(z_in_view_space=True) gives us actual distance
@@ -88,20 +90,21 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.5, area_w=1.0):
                 d_min = depth_np[valid_mask].min()
                 d_max = depth_np[valid_mask].max()
                 
-                # Check if there's actually a range to normalize
-                if d_max > d_min:
-                    d_norm = (depth_np - d_min) / (d_max - d_min)
-                    # Keep background at 0 or 1 depending on preference; 
-                    # here we clip and clear invalid values
-                    d_norm[~valid_mask] = 0 
-                else:
-                    # If all depth values are the same, the image is a solid block
-                    d_norm = np.zeros_like(depth_np)
-                    d_norm[valid_mask] = 1.0
+                    # Check if there's actually a range to normalize
+                    # if d_max > d_min:
+                d_norm = (depth_np - d_min) / (d_max - d_min)
+                # Keep background at 0 or 1 depending on preference; 
+                # here we clip and clear invalid values
+                d_norm[~valid_mask] = 0 
+                    # else:
+                #     # If all depth values are the same, the image is a solid block
+                #     d_norm = np.zeros_like(depth_np)
+                #     d_norm[valid_mask] = 1.0
 
+                # d_norm[valid_mask] = 1-d_norm[valid_mask]
                 # d_img = (np.clip(d_norm, 0, 1) * 255).astype(np.uint8)
-                # channel = (valid_mask*255).astype(np.uint8)
-                # d_img = np.dstack((channel, channel, channel))
+                channel = (valid_mask*255).astype(np.uint8)
+                d_img = np.dstack((channel, channel, channel))
                 
                 
                 edges = cv.Canny(d_img, 50, 150)
@@ -287,7 +290,11 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     center = pcd.get_center()
     bbox = pcd.get_axis_aligned_bounding_box()
     extent = bbox.get_max_bound() - bbox.get_min_bound()
-    distance = np.linalg.norm(extent) * 1.5
+    # distance = np.linalg.norm(extent) * 1.5
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.75
+    
+    
     
     # --- PYTORCH3D TO CARTESIAN CONVERSION ---
     # PyTorch3D uses:
@@ -326,7 +333,7 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(30.0, center, eye, [0, 1, 0])
+    render.setup_camera(60.0, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
