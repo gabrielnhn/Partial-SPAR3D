@@ -249,8 +249,8 @@ if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
     # object = "horse.ply"
-    object = "stanford-bunny.ply"
-    # object = "cow.ply"
+    # object = "stanford-bunny.ply"
+    object = "cow.ply"
     
     renders_dir = "renders"
     if not os.path.isdir(renders_dir):
