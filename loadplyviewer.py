@@ -3,8 +3,8 @@ import os
 import numpy as np
 
 p1 = trimesh.load(f"/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata/stanford-bunny.ply")
-p2 = trimesh.load(f"./output/0/points.ply")
-
+# p2 = trimesh.load(f"./output/0/points.ply")
+p2 = trimesh.load(f"./renders/stanford-bunny/points.ply")
 
 # Create a rotation matrix for the final output domain
 rotation = trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0])
