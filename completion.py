@@ -5,6 +5,7 @@ from time import time
 from tqdm import tqdm
 import cv2 as cv
 from PIL import Image
+import open3d as o3d
 
 RESOLUTION = 512
 
@@ -21,9 +22,6 @@ import numpy as np
 from PIL import Image
 
 device = "cuda"
-model_cache_dir = './ckpts/'
-os.makedirs(model_cache_dir, exist_ok=True)
-
 
 def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     W = H = 512
@@ -76,12 +74,10 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
             renderer.setup_camera(60.0, center, eye, [0, 1, 0])
             
             # Render Depth and Image
-            # render_to_depth_image(z_in_view_space=True) gives us actual distance
             depth_o3d = renderer.render_to_depth_image(z_in_view_space=True)
             depth_np = np.asarray(depth_o3d)
             
             # Mask for valid points (Open3D depth is 0.0 for background usually)
-            # valid_mask = depth_np > 0
             valid_mask = (depth_np > 0) & (np.isfinite(depth_np))
             
             
@@ -102,7 +98,6 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
                 # Normalize it against the total image area (W * H)
                 area_score = valid_pixel_count / (W * H)
 
-                # Subtract area_score because we want to MAXIMIZE visible area, but MINIMIZE loss
                 loss = (pose_w * posedist) + (contour_w * edge_score) - (area_w * area_score)
                 # print(f"posedist{posedist}, edge_score{edge_score}, area{area_score}")
                 
@@ -119,8 +114,6 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
         starth, endh = best_azim - interh, best_azim + interh
         best_final_elev, best_final_azim = best_elev, best_azim
         
-    # cv.imwrite("bestdepth.png", d_img)
-
     print(f"Optimal POV -> Azim: {best_final_azim:.1f}, Elev: {best_final_elev:.1f}")
     return best_final_elev, best_final_azim
 
@@ -163,7 +156,6 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     material.base_metallic = 0.0
     material.point_size = 5.0  # Adjust this float for thickness
     
-    
     render.scene.add_geometry("pcd", pcd, material)
     render.scene.set_background([0, 0, 0, 1]) 
     
@@ -180,8 +172,78 @@ def get_reference_image(pcd, best_elev, best_azim):
     print("Rendering PyTorch3D Reference Image and Depth...")
     img, depth = render_with_open3d(pcd, best_elev, best_azim)
     return img
+    
+from spar3d.system import SPAR3D
+from transparent_background import Remover
+from spar3d.utils import foreground_crop, remove_background
+from contextlib import nullcontext
+    
+def spar3d_full(reference_images, reduction_count_type="keep", target_count=2000):
+
+    model = SPAR3D.from_pretrained(
+        "stabilityai/stable-point-aware-3d",
+        config_name="config.yaml",
+        weight_name="model.safetensors",
+        low_vram_mode=True,
+    )
+    model.to(device)
+    model.eval()
+
+    bg_remover = Remover(device=device)
+    images = []
+    idx = 0
+    for image in reference_images:
+        image = remove_background(
+            Image.fromarray(
+                np.asarray(image)
+            ).convert("RGBA"), bg_remover
+        )
+        image = foreground_crop(image, crop_ratio=1.3)
+        images.append(image)
+
+
+    vertex_count = (
+        -1
+        if reduction_count_type == "keep"
+        else (
+            target_count
+            if reduction_count_type == "vertex"
+            else target_count // 2
+        )
+    )
+
+    for i in tqdm(range(len(images))):
+        image = images[i : i + 1]
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         
-import open3d as o3d
+        with torch.inference_mode():
+            with (
+                torch.autocast(device_type=device, dtype=torch.bfloat16)
+                if "cuda" in device
+                else nullcontext()
+            ):
+                mesh, glob_dict = model.run_image(
+                    image,
+                    bake_resolution=512,
+                    remesh="none",
+                    vertex_count=vertex_count,
+                    return_points=True,
+                )
+        print("Peak Memory:", torch.cuda.max_memory_allocated() / 1024 / 1024, "MB")
+
+        if len(image) == 1:
+            out_mesh_path = os.path.join(renders_dir, "mesh.glb")
+            mesh.export(out_mesh_path, include_normals=True)
+            out_points_path = os.path.join(renders_dir, "points.ply")
+            glob_dict["point_clouds"][0].export(out_points_path)
+        else:
+            for j in range(len(mesh)):
+                out_mesh_path = os.path.join(renders_dir, f"mesh{str(i + j)}.glb")
+                mesh[j].export(out_mesh_path, include_normals=True)
+                out_points_path = os.path.join(renders_dir, f"points{str(i + j)}.ply")
+                glob_dict["point_clouds"][j].export(out_points_path)
+
 
 if __name__ == "__main__":
     print("----------")
@@ -220,4 +282,5 @@ if __name__ == "__main__":
     canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
     o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
     
+    spar3d_full([canonical_image])
     
