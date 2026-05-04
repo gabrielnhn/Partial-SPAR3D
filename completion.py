@@ -45,7 +45,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 1
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
     # distance = SPAR3D_DISTANCE
 
     # Conversion to torch for the point calculations (Chamfer/Pose)
@@ -138,7 +138,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
         os.path.join(renders_dir, "bestdepth.png"),
         best_depth
     )
-    return best_final_elev, best_final_azim
+    return best_final_elev, best_final_azim, distance
     # return best_elev, best_azim
 
 
@@ -153,7 +153,7 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 1.0
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
     # distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
@@ -204,7 +204,9 @@ from transparent_background import Remover
 from spar3d.utils import foreground_crop, remove_background
 from contextlib import nullcontext
     
-def spar3d_full(reference_images, reduction_count_type="keep", target_count=2000):
+def spar3d_full(reference_images,
+                distances,
+                reduction_count_type="keep", target_count=2000):
 
     model = SPAR3D.from_pretrained(
         "stabilityai/stable-point-aware-3d",
@@ -255,6 +257,9 @@ def spar3d_full(reference_images, reduction_count_type="keep", target_count=2000
                     remesh="none",
                     vertex_count=vertex_count,
                     return_points=True,
+                    # NEW STUFF
+                    custom_distance=distances[i],
+                    custom_fovy_deg=60,
                 )
         print("Peak Memory:", torch.cuda.max_memory_allocated() / 1024 / 1024, "MB")
 
@@ -275,8 +280,8 @@ if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
     # object = "horse.ply"
-    # object = "stanford-bunny.ply"
-    object = "cow.ply"
+    object = "stanford-bunny.ply"
+    # object = "cow.ply"
     
     renders_dir = "renders"
     if not os.path.isdir(renders_dir):
@@ -299,7 +304,7 @@ if __name__ == "__main__":
     # if object in angles:
     #     best_elev, best_azim = angles[object]
     # else:
-    best_elev, best_azim = get_canonical_angles(partial_pcd)
+    best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
     
     # best_elev = 12.016324043273926
     # best_azim = -129.30612182617188
@@ -308,7 +313,7 @@ if __name__ == "__main__":
     canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
     o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
 
-    exit()
+    # exit()
     
-    spar3d_full([canonical_image])
+    spar3d_full([canonical_image], [distance])
     

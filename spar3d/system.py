@@ -568,6 +568,9 @@ class SPAR3D(BaseModule):
         vertex_count: int = -1,
         estimate_illumination: bool = False,
         return_points: bool = False,
+        # --- NEW PARAMETERS ---
+        custom_distance: Optional[float] = None,
+        custom_fovy_deg: Optional[float] = None, 
     ) -> Tuple[Union[trimesh.Trimesh, List[trimesh.Trimesh]], dict[str, Any]]:
         if isinstance(image, list):
             rgb_cond = []
@@ -583,9 +586,22 @@ class SPAR3D(BaseModule):
             mask_cond, rgb_cond = self.prepare_image(image)
             batch_size = 1
 
-        c2w_cond = default_cond_c2w(self.cfg.default_distance).to(self.device)
+        # CUSTOM FOV
+        if custom_distance is not None:
+            actual_distance = custom_distance 
+        else:
+            self.cfg.default_distance
+        
+        if custom_fovy_deg is not None:
+            import numpy as np
+            actual_fovy_rad = np.deg2rad(custom_fovy_deg)
+        else:
+            actual_fovy_rad = self.cfg.default_fovy_rad
+
+        # Pass our actual values to the conditioning builders
+        c2w_cond = default_cond_c2w(actual_distance).to(self.device)
         intrinsic, intrinsic_normed_cond = create_intrinsic_from_fov_rad(
-            self.cfg.default_fovy_rad,
+            actual_fovy_rad,
             self.cfg.cond_image_size,
             self.cfg.cond_image_size,
         )
