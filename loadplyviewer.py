@@ -5,6 +5,7 @@ import numpy as np
 
 # object = "stanford-bunny"
 object = "cow"
+# object = "horse"
 
 # p1 = trimesh.load(f"/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata/{object}.ply")
 # # p2 = trimesh.load(f"./output/0/points.ply")

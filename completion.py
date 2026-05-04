@@ -23,6 +23,12 @@ from PIL import Image
 
 device = "cuda"
 
+SPAR3D_FOVY_RAD = 0.591627
+SPAR3D_FOVY_DEG = np.rad2deg(SPAR3D_FOVY_RAD)
+# SPAR3D_FOVY_DEG = 60
+SPAR3D_DISTANCE = 2.2
+
+
 def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     W = H = 512
     renderer = o3d.visualization.rendering.OffscreenRenderer(W, H)
@@ -30,7 +36,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     # material.shader = "defaultLit"
     material.shader = "defaultUnlit"
     material.base_color = [0.7, 0.7, 0.7, 1.0]
-    material.point_size = 7.0
+    material.point_size = 5.0
     renderer.scene.add_geometry("pcd", pcd, material)
     renderer.scene.set_background([0, 0, 0, 1])
 
@@ -38,8 +44,9 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     bbox = pcd.get_axis_aligned_bounding_box()
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
-    # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.75
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.65
+    # distance = np.sqrt(((extent) ** 2).sum()) * 1
+    # distance = SPAR3D_DISTANCE
 
     # Conversion to torch for the point calculations (Chamfer/Pose)
     points_pt = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
@@ -72,6 +79,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
             eye = center + rel_eye
             
             renderer.setup_camera(60.0, center, eye, [0, 1, 0])
+            # renderer.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
             
             # Render Depth and Image
             depth_o3d = renderer.render_to_depth_image(z_in_view_space=True)
@@ -105,7 +113,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
                     best_loss = loss
                     best_elev = elev_deg
                     best_azim = azim_deg
-                    # best_depth = d_img
+                    best_depth = d_img
         
         # Hierarchical refinement
         interv = (endv - startv) / num
@@ -115,6 +123,10 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
         best_final_elev, best_final_azim = best_elev, best_azim
         
     print(f"Optimal POV -> Azim: {best_final_azim:.1f}, Elev: {best_final_elev:.1f}")
+    cv.imwrite(
+        os.path.join(renders_dir, "bestdepth.png"),
+        best_depth
+    )
     return best_final_elev, best_final_azim
 
 
@@ -129,7 +141,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.75
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.75
+    distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
     a = np.radians(best_azim)
@@ -157,11 +170,12 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     material.point_size = 5.0  # Adjust this float for thickness
     
     render.scene.add_geometry("pcd", pcd, material)
-    render.scene.set_background([0, 0, 0, 1]) 
+    render.scene.set_background([0, 0, 1, 1]) 
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(60.0, center, eye, [0, 1, 0])
+    # render.setup_camera(60.0, center, eye, [0, 1, 0])
+    render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
@@ -281,6 +295,8 @@ if __name__ == "__main__":
     print("GET BEST RGB;")
     canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
     o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
+
+    exit()
     
     spar3d_full([canonical_image])
     
