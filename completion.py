@@ -44,8 +44,8 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     bbox = pcd.get_axis_aligned_bounding_box()
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    # distance = np.sqrt(((extent) ** 2).sum()) * 1
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
+    distance = np.sqrt(((extent) ** 2).sum()) * 1
     # distance = SPAR3D_DISTANCE
 
     # Conversion to torch for the point calculations (Chamfer/Pose)
@@ -67,6 +67,16 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
         for i in tqdm(range(len(verss)), desc="Finding canonical..."):
             elev_deg = verss[i].item()
             azim_deg = horss[i].item()
+    # The standard synthetic generation viewpoints
+    # test_elevs = [0.0, 20.0, 45.0]
+    # test_azims = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+    
+    # best_loss = float('inf')
+    # best_elev, best_azim = 0.0, 0.0
+    
+    # for elev_deg in test_elevs:
+    #     for azim_deg in test_azims:
+
             
             e = np.radians(elev_deg)
             a = np.radians(azim_deg)
@@ -123,11 +133,13 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
         best_final_elev, best_final_azim = best_elev, best_azim
         
     print(f"Optimal POV -> Azim: {best_final_azim:.1f}, Elev: {best_final_elev:.1f}")
+    # print(f"Optimal POV -> Azim: {best_azim:.1f}, Elev: {best_elev:.1f}")
     cv.imwrite(
         os.path.join(renders_dir, "bestdepth.png"),
         best_depth
     )
     return best_final_elev, best_final_azim
+    # return best_elev, best_azim
 
 
 import open3d as o3d
@@ -141,8 +153,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    # distance = np.sqrt(((extent) ** 2).sum()) * 0.75
-    distance = SPAR3D_DISTANCE
+    distance = np.sqrt(((extent) ** 2).sum()) * 1.0
+    # distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
     a = np.radians(best_azim)
@@ -174,8 +186,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    # render.setup_camera(60.0, center, eye, [0, 1, 0])
-    render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
+    render.setup_camera(60.0, center, eye, [0, 1, 0])
+    # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
