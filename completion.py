@@ -320,8 +320,8 @@ def align_output_to_input_o3d(mesh_path, best_elev, best_azim, target_pcd):
 if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
-    # object = "horse.ply"
-    object = "stanford-bunny.ply"
+    object = "horse.ply"
+    # object = "stanford-bunny.ply"
     # object = "cow.ply"
     
     renders_dir = "renders"
