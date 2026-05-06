@@ -6,26 +6,34 @@ import numpy as np
 # object = "cow"
 object = "stanford-bunny"
 # object = "horse"
+# object = "teapot"
+
+
 
 p1 = trimesh.load(f"/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata/{object}.ply")
 # # p2 = trimesh.load(f"./output/0/points.ply")
 mesh = trimesh.load(f"./renders/{object}/mesh.glb")
+mesh_aligned = trimesh.load(f"./renders/{object}/mesh_aligned.ply")
 # p2 = trimesh.load(f"./renders/{object}/points.ply")
-p2 = mesh
+# p2 = mesh
 
 
 
 # # Create a rotation matrix for the final output domain
-rotation = trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0])
-rotation2 = trimesh.transformations.rotation_matrix(np.radians(180), [0, 1, 0])
-output_rotation = rotation2 @ rotation
+# rotation = trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0])
+# rotation2 = trimesh.transformations.rotation_matrix(np.radians(180), [0, 1, 0])
+# output_rotation = rotation2 @ rotation
 # output_rotation = rotation
 
-# output_rotation = output_rotation.T
+# # output_rotation = output_rotation.T
+# mesh_aligned = mesh_aligned.apply_transform(output_rotation)
 
-p2 = p2.apply_transform(output_rotation)
 
-scene = trimesh.Scene([p1, p2])
+# p2 = p2.apply_transform(output_rotation)
+
+# scene = trimesh.Scene([p1, mesh, mesh_aligned])
+# scene = trimesh.Scene([p1,mesh_aligned])
+scene = trimesh.Scene([mesh,mesh_aligned])
 # scene = trimesh.Scene([p1])
 # scene = trimesh.Scene([p2])
 
