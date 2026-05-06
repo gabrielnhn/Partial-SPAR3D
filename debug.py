@@ -9,7 +9,7 @@ def debug_viewer(object_name, base_dataset_path, renders_dir):
     # 1. Paths
     partial_path = os.path.join(base_dataset_path, "indata", f"{object_name}.ply")
     gt_path = os.path.join(base_dataset_path, "gtdata", f"{object_name}.ply")
-    aligned_mesh_path = os.path.join(renders_dir, object_name, "mesh_aligned_icp.ply")
+    aligned_mesh_path = os.path.join(renders_dir, object_name, "mesh_bruteforce_aligned.ply")
 
     geometries = []
 

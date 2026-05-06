@@ -276,115 +276,131 @@ def spar3d_full(reference_images,
                 glob_dict["point_clouds"][j].export(out_points_path)
 
 
-def align_output_to_input_o3d(mesh_path, best_elev, best_azim, target_pcd):
-    mesh = o3d.io.read_triangle_mesh(mesh_path)
+import open3d as o3d
+import numpy as np
+from scipy.spatial import KDTree
+import itertools
+import copy
 
-    # 1. Measurement and Scaling
-    mesh_bbox = mesh.get_axis_aligned_bounding_box()
-    mesh_max_extent = np.max(mesh_bbox.get_max_bound() - mesh_bbox.get_min_bound())
-    target_bbox = target_pcd.get_axis_aligned_bounding_box()
-    target_max_extent = np.max(target_bbox.get_max_bound() - target_bbox.get_min_bound())
-    scale_factor = target_max_extent / mesh_max_extent
-
-    mesh.translate(-mesh.get_center())
-    mesh.scale(scale_factor, center=(0, 0, 0))
-
-    # --- 2. CANONICAL CORRECTION ---
-    # SPAR3D is X-Forward. Your system is likely Z-Forward.
-    # We rotate the mesh -90 degrees around Y to align SPAR3D's front with Z.
-    R_correction = mesh.get_rotation_matrix_from_axis_angle([0, np.radians(-90), 0])
-    mesh.rotate(R_correction, center=(0, 0, 0))
-
-    # --- 3. APPLY SEARCHED ANGLES ---
-    # Rotate UP/DOWN first (X-axis)
-    rad_elev = np.radians(best_elev)
-    R_elev = mesh.get_rotation_matrix_from_axis_angle([rad_elev, 0, 0])
-    
-    # Rotate LEFT/RIGHT (Y-axis)
-    # Note: Using rad_azim (positive) here often works better for 
-    # the back-projection logic.
-    rad_azim = np.radians(best_azim)
-    R_azim = mesh.get_rotation_matrix_from_axis_angle([0, -rad_azim, 0])
-    
-    # Apply transformation: Elevation then Azimuth
-    mesh.rotate(R_elev, center=(0, 0, 0))
-    mesh.rotate(R_azim, center=(0, 0, 0))
-
-    # 4. Final Translation
-    mesh.translate(target_pcd.get_center())
-
-    aligned_path = mesh_path.replace(".glb", "_aligned.ply")
-    o3d.io.write_triangle_mesh(aligned_path, mesh)
-    return mesh
-
-def align_and_eval_to_ground_truth_pcd(aligned_mesh_path, partial_pcd_path, gt_pcd_path, num_samples=10000, d_th=0.05):
-    """
-    Runs ICP to refine the alignment against the partial input, 
-    then evaluates Chamfer Distance and F-Score against the Ground Truth.
-    """
-    print(f"\n--- Running Final Evaluation ---")
+def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0.05):
+    print(f"\n--- Running SPAR3D Protocol: Brute-Force + ICP Evaluation ---")
     
     # 1. Load Assets
-    mesh = o3d.io.read_triangle_mesh(aligned_mesh_path)
-    partial_pcd = o3d.io.read_point_cloud(partial_pcd_path)
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
     gt_pcd = o3d.io.read_point_cloud(gt_pcd_path)
-
-    # 2. Sample points from the generated mesh
-    # Uniform sampling is fast and reliable for CD evaluation
+    
+    # Sample dense points from mesh
     mesh_pcd = mesh.sample_points_uniformly(number_of_points=num_samples)
 
-    # 3. ICP Refinement (Source: Mesh Points, Target: Partial PCD)
-    # We only align to the partial cloud, simulating test-time inference.
-    threshold = 0.05 # Search radius for correspondences
-    trans_init = np.eye(4) # Assume our prior mathematical alignment is already close
+    # 2. Protocol Step 1: Normalize BOTH to a unit bounding box at the origin
+    def normalize_pcd(pcd):
+        pcd_copy = copy.deepcopy(pcd)
+        center = pcd_copy.get_center()
+        pcd_copy.translate(-center)
+        bbox = pcd_copy.get_axis_aligned_bounding_box()
+        max_extent = np.max(bbox.get_max_bound() - bbox.get_min_bound())
+        pcd_copy.scale(1.0 / max_extent, center=(0, 0, 0))
+        return pcd_copy, center, max_extent
+
+    pred_norm, _, _ = normalize_pcd(mesh_pcd)
+    gt_norm, gt_center, gt_scale = normalize_pcd(gt_pcd)
+
+    # 3. Protocol Step 2: Brute-Force Rotation Search
+    print("1. Executing brute-force search over SO(3) [13,824 rotations]...")
     
-    print("1. Running ICP refinement against Partial Point Cloud...")
+    # Downsample for extreme speed during the brute-force phase (1000 points is plenty for rough alignment)
+    src_down = pred_norm.random_down_sample(1000 / len(pred_norm.points))
+    tgt_down = gt_norm.random_down_sample(1000 / len(gt_norm.points))
+    
+    src_pts = np.asarray(src_down.points)
+    tgt_pts = np.asarray(tgt_down.points)
+    
+    # Build KDTree on the Ground Truth for lightning-fast distance queries
+    tgt_tree = KDTree(tgt_pts)
+    
+    best_dist = float('inf')
+    best_R = np.eye(3)
+    
+    # Search grid: Every 15 degrees around X, Y, and Z
+    angles = np.deg2rad(np.arange(0, 360, 15))
+    
+    for rx, ry, rz in itertools.product(angles, angles, angles):
+        # Fast manual rotation matrix construction
+        cx, sx = np.cos(rx), np.sin(rx)
+        cy, sy = np.cos(ry), np.sin(ry)
+        cz, sz = np.cos(rz), np.sin(rz)
+        
+        Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+        Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+        Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+        R = Rz @ Ry @ Rx
+        
+        # Apply rotation to source points
+        rot_src = src_pts @ R.T
+        
+        # Calculate mean distance to nearest neighbors
+        d, _ = tgt_tree.query(rot_src)
+        dist = np.mean(d)
+        
+        if dist < best_dist:
+            best_dist = dist
+            best_R = R
+
+    print(f"   -> Found optimal initial rotation.")
+
+    # Apply the best rotation to our normalized dense prediction
+    pred_norm.rotate(best_R, center=(0,0,0))
+
+    # 4. Protocol Step 3: Refine with ICP
+    print("2. Refining alignment with ICP...")
+    threshold = 0.05
+    trans_init = np.eye(4)
+    
     reg_p2p = o3d.pipelines.registration.registration_icp(
-        mesh_pcd, partial_pcd, threshold, trans_init,
+        pred_norm, gt_norm, threshold, trans_init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=200)
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=500)
     )
     
-    # Apply the refined transformation to both the point cloud and the mesh
-    mesh_pcd.transform(reg_p2p.transformation)
-    mesh.transform(reg_p2p.transformation)
+    pred_norm.transform(reg_p2p.transformation)
 
-    # Save the final, ICP-snapped mesh for your visual records
-    icp_mesh_path = aligned_mesh_path.replace(".ply", "_icp.ply")
-    o3d.io.write_triangle_mesh(icp_mesh_path, mesh)
-
-    # 4. Compute Chamfer Distance against Ground Truth
-    print("2. Computing metrics against Ground Truth...")
+    # 5. Restore Original Ground Truth Scale & Position (Optional but useful for viewing)
+    pred_norm.scale(gt_scale, center=(0,0,0))
+    pred_norm.translate(gt_center)
     
-    # Distance from Mesh to GT (Accuracy)
-    dists_m_to_gt = np.asarray(mesh_pcd.compute_point_cloud_distance(gt_pcd))
+    mesh.translate(-mesh.get_center())
+    mesh.scale(1.0 / np.max((mesh.get_axis_aligned_bounding_box().get_max_bound() - mesh.get_axis_aligned_bounding_box().get_min_bound())), center=(0,0,0))
+    mesh.rotate(best_R, center=(0,0,0))
+    mesh.transform(reg_p2p.transformation)
+    mesh.scale(gt_scale, center=(0,0,0))
+    mesh.translate(gt_center)
+    
+    # Save aligned mesh
+    aligned_path = mesh_path.replace(".glb", "_bruteforce_aligned.ply")
+    o3d.io.write_triangle_mesh(aligned_path, mesh)
+
+    # 6. Protocol Step 4: Compute Metrics
+    print("3. Computing final evaluation metrics...")
+    
+    dists_m_to_gt = np.asarray(pred_norm.compute_point_cloud_distance(gt_pcd))
+    dists_gt_to_m = np.asarray(gt_pcd.compute_point_cloud_distance(pred_norm))
+    
     mean_dist_m_to_gt = np.mean(dists_m_to_gt)
-
-    # Distance from GT to Mesh (Completeness)
-    dists_gt_to_m = np.asarray(gt_pcd.compute_point_cloud_distance(mesh_pcd))
     mean_dist_gt_to_m = np.mean(dists_gt_to_m)
-
-    # Standard L1 Chamfer Distance
+    
     chamfer_dist = mean_dist_m_to_gt + mean_dist_gt_to_m
-
-    # 5. Compute F-Score (FS@d_th)
-    # F-Score is critical because Chamfer Distance can be skewed by outliers.
-    # SPAR3D reports FS@0.1 and FS@0.2. (Make sure your object scales match theirs!)
+    
     precision = np.mean(dists_m_to_gt < d_th) * 100
     recall = np.mean(dists_gt_to_m < d_th) * 100
     
-    if (precision + recall) == 0:
-        f_score = 0.0
-    else:
-        f_score = 2 * (precision * recall) / (precision + recall)
+    f_score = 0.0 if (precision + recall) == 0 else 2 * (precision * recall) / (precision + recall)
 
-    print(f"\n--- Final Benchmark Metrics ---")
-    print(f"ICP Fitness Score:   {reg_p2p.fitness:.4f} (Higher is better alignment to partial)")
+    print(f"\n--- SPAR3D BENCHMARK RESULTS ---")
     print(f"Chamfer Distance:    {chamfer_dist:.6f}")
     print(f"Accuracy (M->GT):    {mean_dist_m_to_gt:.6f}")
     print(f"Completeness (GT->M):{mean_dist_gt_to_m:.6f}")
     print(f"F-Score @ {d_th}:      {f_score:.2f}%")
-    print(f"-------------------------------\n")
+    print(f"--------------------------------\n")
 
     return chamfer_dist, f_score, mesh
 
@@ -430,26 +446,12 @@ if __name__ == "__main__":
     
     spar3d_full([canonical_image], [distance])
     
-    # Get the bounding box and calculate the maximum dimension
-    bbox = partial_pcd.get_axis_aligned_bounding_box()
-    extent = bbox.get_max_bound() - bbox.get_min_bound()
-    pcd_scale = np.max(extent) / 2.0  # Use just np.max(extent) if SPAR3D outputs size=1.0 instead of radius=1.0
-
-    align_output_to_input_o3d(
-        os.path.join(renders_dir, "mesh.glb"),
-        best_elev, 
-        best_azim,
-        partial_pcd
-    )
-    
-    aligned_mesh_path = os.path.join(renders_dir, "mesh_aligned.ply")
-    partial_path = os.path.join(dataset_path, "indata", object)
+    raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
     gt_path = os.path.join(dataset_path, "gtdata", object)
-
-    cd, fs, final_mesh = align_and_eval_to_ground_truth_pcd(
-        aligned_mesh_path, 
-        partial_path, 
-        gt_path, 
+    
+    cd, fs, final_mesh = brute_force_align_and_eval(
+        mesh_path=raw_mesh_path,
+        gt_pcd_path=gt_path,
         num_samples=10000, 
-        d_th=0.05  # Adjust this threshold to match ComPC's F-score definition
+        d_th=0.05 
     )
