@@ -58,7 +58,11 @@ def debug_viewer(object_name, base_dataset_path, renders_dir):
 if __name__ == "__main__":
     # Settings match your previous prompt
     # OBJ_NAME = "stanford-bunny"
-    OBJ_NAME = "horse"
+    # OBJ_NAME = "horse"
+    OBJ_NAME = input("object: ")
+    
+    
+    
     DATASET_BASE = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"
     RENDERS_DIR = "./renders"
     

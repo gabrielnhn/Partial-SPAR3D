@@ -153,8 +153,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
-    # distance = SPAR3D_DISTANCE
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.8
+    distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
     a = np.radians(best_azim)
@@ -186,8 +186,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(60.0, center, eye, [0, 1, 0])
-    # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
+    # render.setup_camera(60.0, center, eye, [0, 1, 0])
+    render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
@@ -408,7 +408,9 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
 if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
-    object = "horse.ply"
+    
+    object = input("object: ")+".ply"
+    # object = "horse.ply"
     # object = "stanford-bunny.ply"
     # object = "cow.ply"
     
