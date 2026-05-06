@@ -317,6 +317,78 @@ def align_output_to_input_o3d(mesh_path, best_elev, best_azim, target_pcd):
     o3d.io.write_triangle_mesh(aligned_path, mesh)
     return mesh
 
+def align_and_eval_to_ground_truth_pcd(aligned_mesh_path, partial_pcd_path, gt_pcd_path, num_samples=10000, d_th=0.05):
+    """
+    Runs ICP to refine the alignment against the partial input, 
+    then evaluates Chamfer Distance and F-Score against the Ground Truth.
+    """
+    print(f"\n--- Running Final Evaluation ---")
+    
+    # 1. Load Assets
+    mesh = o3d.io.read_triangle_mesh(aligned_mesh_path)
+    partial_pcd = o3d.io.read_point_cloud(partial_pcd_path)
+    gt_pcd = o3d.io.read_point_cloud(gt_pcd_path)
+
+    # 2. Sample points from the generated mesh
+    # Uniform sampling is fast and reliable for CD evaluation
+    mesh_pcd = mesh.sample_points_uniformly(number_of_points=num_samples)
+
+    # 3. ICP Refinement (Source: Mesh Points, Target: Partial PCD)
+    # We only align to the partial cloud, simulating test-time inference.
+    threshold = 0.05 # Search radius for correspondences
+    trans_init = np.eye(4) # Assume our prior mathematical alignment is already close
+    
+    print("1. Running ICP refinement against Partial Point Cloud...")
+    reg_p2p = o3d.pipelines.registration.registration_icp(
+        mesh_pcd, partial_pcd, threshold, trans_init,
+        o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=200)
+    )
+    
+    # Apply the refined transformation to both the point cloud and the mesh
+    mesh_pcd.transform(reg_p2p.transformation)
+    mesh.transform(reg_p2p.transformation)
+
+    # Save the final, ICP-snapped mesh for your visual records
+    icp_mesh_path = aligned_mesh_path.replace(".ply", "_icp.ply")
+    o3d.io.write_triangle_mesh(icp_mesh_path, mesh)
+
+    # 4. Compute Chamfer Distance against Ground Truth
+    print("2. Computing metrics against Ground Truth...")
+    
+    # Distance from Mesh to GT (Accuracy)
+    dists_m_to_gt = np.asarray(mesh_pcd.compute_point_cloud_distance(gt_pcd))
+    mean_dist_m_to_gt = np.mean(dists_m_to_gt)
+
+    # Distance from GT to Mesh (Completeness)
+    dists_gt_to_m = np.asarray(gt_pcd.compute_point_cloud_distance(mesh_pcd))
+    mean_dist_gt_to_m = np.mean(dists_gt_to_m)
+
+    # Standard L1 Chamfer Distance
+    chamfer_dist = mean_dist_m_to_gt + mean_dist_gt_to_m
+
+    # 5. Compute F-Score (FS@d_th)
+    # F-Score is critical because Chamfer Distance can be skewed by outliers.
+    # SPAR3D reports FS@0.1 and FS@0.2. (Make sure your object scales match theirs!)
+    precision = np.mean(dists_m_to_gt < d_th) * 100
+    recall = np.mean(dists_gt_to_m < d_th) * 100
+    
+    if (precision + recall) == 0:
+        f_score = 0.0
+    else:
+        f_score = 2 * (precision * recall) / (precision + recall)
+
+    print(f"\n--- Final Benchmark Metrics ---")
+    print(f"ICP Fitness Score:   {reg_p2p.fitness:.4f} (Higher is better alignment to partial)")
+    print(f"Chamfer Distance:    {chamfer_dist:.6f}")
+    print(f"Accuracy (M->GT):    {mean_dist_m_to_gt:.6f}")
+    print(f"Completeness (GT->M):{mean_dist_gt_to_m:.6f}")
+    print(f"F-Score @ {d_th}:      {f_score:.2f}%")
+    print(f"-------------------------------\n")
+
+    return chamfer_dist, f_score, mesh
+
+
 if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
@@ -368,4 +440,16 @@ if __name__ == "__main__":
         best_elev, 
         best_azim,
         partial_pcd
+    )
+    
+    aligned_mesh_path = os.path.join(renders_dir, "mesh_aligned.ply")
+    partial_path = os.path.join(dataset_path, "indata", object)
+    gt_path = os.path.join(dataset_path, "gtdata", object)
+
+    cd, fs, final_mesh = align_and_eval_to_ground_truth_pcd(
+        aligned_mesh_path, 
+        partial_path, 
+        gt_path, 
+        num_samples=10000, 
+        d_th=0.05  # Adjust this threshold to match ComPC's F-score definition
     )
