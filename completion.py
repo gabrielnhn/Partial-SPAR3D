@@ -194,7 +194,7 @@ from spar3d.utils import foreground_crop, remove_background
 from contextlib import nullcontext
     
 def spar3d_full(reference_images,
-                paths,
+                objects,
                 reduction_count_type="keep",
                 target_count=2000):
 
@@ -253,17 +253,11 @@ def spar3d_full(reference_images,
                 )
         print("Peak Memory:", torch.cuda.max_memory_allocated() / 1024 / 1024, "MB")
 
-        if len(image) == 1:
-            out_mesh_path = os.path.join(renders_dir, "mesh.glb")
-            mesh.export(out_mesh_path, include_normals=True)
-            out_points_path = os.path.join(renders_dir, "points.ply")
-            glob_dict["point_clouds"][0].export(out_points_path)
-        else:
-            for j in range(len(mesh)):
-                out_mesh_path = os.path.join(renders_dir, f"mesh{str(i + j)}.glb")
-                mesh[j].export(out_mesh_path, include_normals=True)
-                out_points_path = os.path.join(renders_dir, f"points{str(i + j)}.ply")
-                glob_dict["point_clouds"][j].export(out_points_path)
+        renders_dir = os.path.join("renders", os.path.basename(objects[i]).split(".")[0])   
+        out_mesh_path = os.path.join(renders_dir, "mesh.glb")
+        mesh.export(out_mesh_path, include_normals=True)
+        out_points_path = os.path.join(renders_dir, "points.ply")
+        glob_dict["point_clouds"][0].export(out_points_path)
 
     del model, bg_remover
 
