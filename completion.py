@@ -194,8 +194,9 @@ from spar3d.utils import foreground_crop, remove_background
 from contextlib import nullcontext
     
 def spar3d_full(reference_images,
-                distances,
-                reduction_count_type="keep", target_count=2000):
+                paths,
+                reduction_count_type="keep",
+                target_count=2000):
 
     model = SPAR3D.from_pretrained(
         "stabilityai/stable-point-aware-3d",
@@ -263,6 +264,10 @@ def spar3d_full(reference_images,
                 mesh[j].export(out_mesh_path, include_normals=True)
                 out_points_path = os.path.join(renders_dir, f"points{str(i + j)}.ply")
                 glob_dict["point_clouds"][j].export(out_points_path)
+
+    del model, bg_remover
+
+
 
 
 import open3d as o3d
@@ -429,7 +434,7 @@ if __name__ == "__main__":
         else:
             print("bruh give me a point cloud kom op")
 
-    
+    reference_images = []
     for object in tqdm(objects, desc=f"Processing all objects in {args.dir}"):
         print(f"PROCESSING {object}")
         
@@ -449,24 +454,23 @@ if __name__ == "__main__":
             exit()
         print("RIGHT AFTER")
         
-        partial_pcd.estimate_normals()
-
-        # angles = {
-        #     "stanford-bunny.ply": (12.016324043273926, -129.30612182617188),
-        #     "cow.ply": (10.44897747039795,-2.3510241508483887),
-        # }
-        
+        partial_pcd.estimate_normals()        
         best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
 
         print("GET BEST RGB;")
         canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
         o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
+        reference_images.append(canonical_image)
 
-        spar3d_full([canonical_image], [distance])
+
+    # spar3d_full([canonical_image],[1])
+    spar3d_full(reference_images, objects)
         
+        
+    for object in objects:
+        renders_dir = os.path.join("renders", os.path.basename(object).split(".")[0])   
         raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
         gt_path = object.replace("indata", "gtdata")
-        
         cd, fs, final_mesh = brute_force_align_and_eval(
             mesh_path=raw_mesh_path,
             gt_pcd_path=gt_path,
