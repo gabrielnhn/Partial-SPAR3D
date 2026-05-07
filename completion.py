@@ -102,8 +102,13 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
                 posedist = torch.norm(eye_pt - points_pt, dim=-1).mean().item()
                 
                 valid_pixel_count = np.sum(valid_mask)
+                
+                y_idx, x_idx = np.where(valid_mask)
+                bbox_area = (x_idx.max() - x_idx.min() + 1) * (y_idx.max() - y_idx.min() + 1)
+                
                 # Normalize it against the total image area (W * H)
-                area_score = valid_pixel_count / (W * H)
+                # area_score = valid_pixel_count / (W * H)
+                area_score = valid_pixel_count / bbox_area
 
                 loss = (pose_w * posedist) + (contour_w * edge_score) - (area_w * area_score)
                 # print(f"posedist{posedist}, edge_score{edge_score}, area{area_score}")
@@ -142,8 +147,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    # distance = np.sqrt(((extent) ** 2).sum()) * 0.8
-    distance = SPAR3D_DISTANCE
+    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
+    # distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
     a = np.radians(best_azim)
@@ -175,8 +180,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    # render.setup_camera(60.0, center, eye, [0, 1, 0])
-    render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
+    render.setup_camera(60.0, center, eye, [0, 1, 0])
+    # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
@@ -445,8 +450,7 @@ if __name__ == "__main__":
         o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
         reference_images.append(canonical_image)
 
-
-    # spar3d_full([canonical_image],[1])
+    exit()
     spar3d_full(reference_images, objects)
         
         
