@@ -55,29 +55,18 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     starth, endh = -180.0, 180.0
     num = 50 
     best_final_elev, best_final_azim = 0.0, 0.0
+    best_elev, best_azim = 0.0, 0.0
+    best_loss = float('inf')
 
     for j in range(2):
         vers = torch.linspace(startv, endv, num)
         hors = torch.linspace(starth, endh, num)
         verss, horss = torch.meshgrid(vers, hors, indexing='ij')
-        verss, horss = verss.flatten(), horss.flatten()
-        
-        best_loss = float('inf')
+        verss, horss = verss.flatten(), horss.flatten()        
         
         for i in tqdm(range(len(verss)), desc="Finding canonical..."):
             elev_deg = verss[i].item()
-            azim_deg = horss[i].item()
-    # The standard synthetic generation viewpoints
-    # test_elevs = [0.0, 20.0, 45.0]
-    # test_azims = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
-    
-    # best_loss = float('inf')
-    # best_elev, best_azim = 0.0, 0.0
-    
-    # for elev_deg in test_elevs:
-    #     for azim_deg in test_azims:
-
-            
+            azim_deg = horss[i].item()            
             e = np.radians(elev_deg)
             a = np.radians(azim_deg)
             
@@ -405,55 +394,82 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
     return chamfer_dist, f_score, mesh
 
 
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--file", default=None)
+parser.add_argument("--dir", default=None)
+args = parser.parse_args()
+
+
 if __name__ == "__main__":
     print("----------")
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"    
-    
-    object = input("object: ")+".ply"
+
     # object = "horse.ply"
     # object = "stanford-bunny.ply"
     # object = "cow.ply"
     
-    renders_dir = "renders"
-    if not os.path.isdir(renders_dir):
-        os.mkdir(renders_dir)    
+    objects = []
+    if not args.file and not args.dir:
+        object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
+        objects.append(object)
 
-    renders_dir = os.path.join(renders_dir, object.split(".")[0])
-    if not os.path.isdir(renders_dir):
-        os.mkdir(renders_dir)
-    
-    print("LOADING PCD;")
-    partial_pcd = o3d.io.read_point_cloud(os.path.join(dataset_path, "indata", object))
-    partial_pcd.estimate_normals()
+    else:
+        if os.path.isdir(args.dir):
+            for file in os.listdir(args.dir):
+                if file.endswith(".ply"):
+                    objects.append(
+                        os.path.join(args.dir, file)
+                    )
+                
+        
+        elif os.path.exists(args.file):
+            objects.append(args.file)
 
-    angles = {
-        "stanford-bunny.ply": (12.016324043273926, -129.30612182617188),
-        "cow.ply": (10.44897747039795,-2.3510241508483887),
-    }
-    
-    # print("FIND AZIM/ELEV;")
-    # if object in angles:
-    #     best_elev, best_azim = angles[object]
-    # else:
-    best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
-    
-    # best_elev = 12.016324043273926
-    # best_azim = -129.30612182617188
+        else:
+            print("bruh give me a point cloud kom op")
 
-    print("GET BEST RGB;")
-    canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
-    o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
+    
+    for object in tqdm(objects, desc=f"Processing all objects in {args.dir}"):
+        print(f"PROCESSING {object}")
+        
+        renders_dir = "renders"
+        if not os.path.isdir(renders_dir):
+            os.mkdir(renders_dir)    
 
-    # exit()
-    
-    spar3d_full([canonical_image], [distance])
-    
-    raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
-    gt_path = os.path.join(dataset_path, "gtdata", object)
-    
-    cd, fs, final_mesh = brute_force_align_and_eval(
-        mesh_path=raw_mesh_path,
-        gt_pcd_path=gt_path,
-        num_samples=10000, 
-        d_th=0.05 
-    )
+        renders_dir = os.path.join(renders_dir, object.split(".")[0])
+        if not os.path.isdir(renders_dir):
+            os.mkdir(renders_dir)
+        
+        print("LOADING PCD;")
+        # partial_pcd = o3d.io.read_point_cloud()
+        partial_pcd = o3d.io.read_point_cloud(object)
+        if not partial_pcd:
+            print("SOMETHING WENT TERRIBLY WRONG DUDE")
+            exit()
+        print("RIGHT AFTER")
+        
+        partial_pcd.estimate_normals()
+
+        # angles = {
+        #     "stanford-bunny.ply": (12.016324043273926, -129.30612182617188),
+        #     "cow.ply": (10.44897747039795,-2.3510241508483887),
+        # }
+        
+        best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
+
+        print("GET BEST RGB;")
+        canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
+        o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
+
+        spar3d_full([canonical_image], [distance])
+        
+        raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
+        gt_path = os.path.join(dataset_path, "gtdata", object)
+        
+        cd, fs, final_mesh = brute_force_align_and_eval(
+            mesh_path=raw_mesh_path,
+            gt_pcd_path=gt_path,
+            num_samples=10000, 
+            d_th=0.05 
+        )

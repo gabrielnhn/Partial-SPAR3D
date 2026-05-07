@@ -1,6 +1,3 @@
-import trimesh
-import os
-import numpy as np
 
 
 # object = "cow"
@@ -8,6 +5,17 @@ object = "stanford-bunny"
 # object = "horse"
 # object = "teapot"
 
+import open3d as o3d
+drag = "../datasets/synthetic_redwood/upload/plyobj/indata/xyzrgb_dragon.ply"
+dragon = o3d.io.read_point_cloud(drag)
+geometries = [dragon]
+o3d.visualization.draw_geometries(geometries)
+
+exit()
+
+import trimesh
+import os
+import numpy as np
 
 
 p1 = trimesh.load(f"/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata/{object}.ply")
