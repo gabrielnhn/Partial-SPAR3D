@@ -270,17 +270,13 @@ from scipy.spatial import KDTree
 import itertools
 import copy
 
-def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0.05):
-    print(f"\n--- Running SPAR3D Protocol: Brute-Force + ICP Evaluation ---")
-    
-    # 1. Load Assets
+def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0.05):
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     gt_pcd = o3d.io.read_point_cloud(gt_pcd_path)
     
     # Sample dense points from mesh
     mesh_pcd = mesh.sample_points_uniformly(number_of_points=num_samples)
 
-    # 2. Protocol Step 1: Normalize BOTH to a unit bounding box at the origin
     def normalize_pcd(pcd):
         pcd_copy = copy.deepcopy(pcd)
         center = pcd_copy.get_center()
@@ -293,8 +289,7 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
     pred_norm, _, _ = normalize_pcd(mesh_pcd)
     gt_norm, gt_center, gt_scale = normalize_pcd(gt_pcd)
 
-    # 3. Protocol Step 2: Brute-Force Rotation Search
-    print("1. Executing brute-force search over SO(3) [13,824 rotations]...")
+    # print("brute-force search over SO(3) [13,824 rotations]...")
     
     # Downsample for extreme speed during the brute-force phase (1000 points is plenty for rough alignment)
     src_down = pred_norm.random_down_sample(1000 / len(pred_norm.points))
@@ -339,8 +334,7 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
     # Apply the best rotation to our normalized dense prediction
     pred_norm.rotate(best_R, center=(0,0,0))
 
-    # 4. Protocol Step 3: Refine with ICP
-    print("2. Refining alignment with ICP...")
+    print("Refining with ICP")
     threshold = 0.05
     trans_init = np.eye(4)
     
@@ -363,12 +357,8 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
     mesh.scale(gt_scale, center=(0,0,0))
     mesh.translate(gt_center)
     
-    # Save aligned mesh
     aligned_path = mesh_path.replace(".glb", "_bruteforce_aligned.ply")
     o3d.io.write_triangle_mesh(aligned_path, mesh)
-
-    # 6. Protocol Step 4: Compute Metrics
-    print("3. Computing final evaluation metrics...")
     
     dists_m_to_gt = np.asarray(pred_norm.compute_point_cloud_distance(gt_pcd))
     dists_gt_to_m = np.asarray(gt_pcd.compute_point_cloud_distance(pred_norm))
@@ -378,19 +368,18 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=10000, d_th=0
     
     chamfer_dist = mean_dist_m_to_gt + mean_dist_gt_to_m
     
-    precision = np.mean(dists_m_to_gt < d_th) * 100
-    recall = np.mean(dists_gt_to_m < d_th) * 100
-    
-    f_score = 0.0 if (precision + recall) == 0 else 2 * (precision * recall) / (precision + recall)
+    # precision = np.mean(dists_m_to_gt < d_th) * 100
+    # recall = np.mean(dists_gt_to_m < d_th) * 100    
+    # f_score = 0.0 if (precision + recall) == 0 else 2 * (precision * recall) / (precision + recall)
 
     print(f"\n--- SPAR3D BENCHMARK RESULTS ---")
     print(f"Chamfer Distance:    {chamfer_dist:.6f}")
-    print(f"Accuracy (M->GT):    {mean_dist_m_to_gt:.6f}")
-    print(f"Completeness (GT->M):{mean_dist_gt_to_m:.6f}")
-    print(f"F-Score @ {d_th}:      {f_score:.2f}%")
-    print(f"--------------------------------\n")
+    # print(f"Accuracy (M->GT):    {mean_dist_m_to_gt:.6f}")
+    # print(f"Completeness (GT->M):{mean_dist_gt_to_m:.6f}")
+    # print(f"F-Score @ {d_th}:      {f_score:.2f}%")
+    # print(f"--------------------------------\n")
 
-    return chamfer_dist, f_score, mesh
+    return chamfer_dist
 
 
 import argparse
@@ -465,7 +454,9 @@ if __name__ == "__main__":
         renders_dir = os.path.join("renders", os.path.basename(object).split(".")[0])   
         raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
         gt_path = object.replace("indata", "gtdata")
-        cd, fs, final_mesh = brute_force_align_and_eval(
+        
+        print(f"stats for {os.path.basename(object)}")
+        brute_force_align_and_eval(
             mesh_path=raw_mesh_path,
             gt_pcd_path=gt_path,
             num_samples=10000, 

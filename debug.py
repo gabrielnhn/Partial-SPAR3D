@@ -59,11 +59,11 @@ if __name__ == "__main__":
     # Settings match your previous prompt
     # OBJ_NAME = "stanford-bunny"
     # OBJ_NAME = "horse"
-    OBJ_NAME = input("object: ")
-    
-    
+    # OBJ_NAME = input("object: ")
+      
     
     DATASET_BASE = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj"
     RENDERS_DIR = "./renders"
     
-    debug_viewer(OBJ_NAME, DATASET_BASE, RENDERS_DIR)
+    for OBJ_NAME in os.listdir("renders"):
+        debug_viewer(OBJ_NAME, DATASET_BASE, RENDERS_DIR)
