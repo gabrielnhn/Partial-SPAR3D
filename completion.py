@@ -77,7 +77,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
             ])
             eye = center + rel_eye
             
-            renderer.setup_camera(60.0, center, eye, [0, 1, 0])
+            renderer.setup_camera(MYCHOICEFOV, center, eye, [0, 1, 0])
             # renderer.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
             
             # Render Depth and Image
@@ -180,7 +180,7 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(60.0, center, eye, [0, 1, 0])
+    render.setup_camera(MYCHOICEFOV, center, eye, [0, 1, 0])
     # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
@@ -391,8 +391,9 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--file", default=None)
 parser.add_argument("--dir", default=None)
+parser.add_argument("--fov", default=SPAR3D_FOVY_DEG)
 args = parser.parse_args()
-
+MYCHOICEFOV = args.fov
 
 if __name__ == "__main__":
     print("----------")
@@ -450,7 +451,7 @@ if __name__ == "__main__":
         o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
         reference_images.append(canonical_image)
 
-    exit()
+    # exit()
     spar3d_full(reference_images, objects)
         
         
