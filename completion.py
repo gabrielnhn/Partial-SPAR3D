@@ -437,7 +437,7 @@ if __name__ == "__main__":
         if not os.path.isdir(renders_dir):
             os.mkdir(renders_dir)    
 
-        renders_dir = os.path.join(renders_dir, object.split(".")[0])
+        renders_dir = os.path.join(renders_dir, os.path.basename(object).split(".")[0])
         if not os.path.isdir(renders_dir):
             os.mkdir(renders_dir)
         
