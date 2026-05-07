@@ -465,7 +465,7 @@ if __name__ == "__main__":
         spar3d_full([canonical_image], [distance])
         
         raw_mesh_path = os.path.join(renders_dir, "mesh.glb")
-        gt_path = os.path.join(dataset_path, "gtdata", object)
+        gt_path = object.replace("indata", "gtdata")
         
         cd, fs, final_mesh = brute_force_align_and_eval(
             mesh_path=raw_mesh_path,
