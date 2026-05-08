@@ -269,12 +269,11 @@ def spar3d_full(reference_images,
 
 
 
-import open3d as o3d
-import numpy as np
 from scipy.spatial import KDTree
 import itertools
 import copy
 
+# taken from SPAR3D
 def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0.05):
     mesh = o3d.io.read_triangle_mesh(mesh_path)
     gt_pcd = o3d.io.read_point_cloud(gt_pcd_path)
@@ -391,7 +390,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--file", default=None)
 parser.add_argument("--dir", default=None)
-parser.add_argument("--fov", default=SPAR3D_FOVY_DEG)
+parser.add_argument("--fov", type=float, default=SPAR3D_FOVY_DEG)
 args = parser.parse_args()
 MYCHOICEFOV = args.fov
 
