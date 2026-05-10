@@ -19,7 +19,7 @@ def debug_viewer(object_name, base_dataset_path, renders_dir):
     mesh = o3d.io.read_triangle_mesh(aligned_mesh_path)
     mesh.compute_vertex_normals()
     mesh.paint_uniform_color([0.7, 0.7, 0.7]) 
-    geometries.append(mesh)
+    # geometries.append(mesh)
     print(f"Loaded Aligned Mesh: {aligned_mesh_path}")
 
     # pcd_partial = o3d.io.read_point_cloud(partial_path)
@@ -29,13 +29,18 @@ def debug_viewer(object_name, base_dataset_path, renders_dir):
 
     pcd_gt = o3d.io.read_point_cloud(gt_path)
     pcd_gt.paint_uniform_color([1, 0, 0])
-    geometries.append(pcd_gt) 
+    # geometries.append(pcd_gt) 
     print(f"Loaded GT PCD: {gt_path}")
 
-    pcd_inter = o3d.io.read_point_cloud(inter_pc_path)
-    pcd_inter.paint_uniform_color([1, 0, 1])
-    geometries.append(pcd_inter) 
-    print(f"Loaded INTER PCD: {gt_path}")
+    geometries.append(pcd_gt) 
+    # geometries.append(mesh)
+    
+    
+    
+    # pcd_inter = o3d.io.read_point_cloud(inter_pc_path)
+    # pcd_inter.paint_uniform_color([1, 0, 1])
+    # geometries.append(pcd_inter) 
+    # print(f"Loaded INTER PCD: {gt_path}")
     
     # pcd_inter = o3d.io.read_point_cloud(os.path.join(renders_dir, object_name, "points-gtsample.ply"))
     # pcd_inter.paint_uniform_color([0, 1, 0])
