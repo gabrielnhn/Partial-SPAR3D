@@ -45,8 +45,8 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
-    # distance = SPAR3D_DISTANCE
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.8
+    distance = SPAR3D_DISTANCE
 
     # Conversion to torch for the point calculations (Chamfer/Pose)
     points_pt = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
@@ -170,21 +170,12 @@ def render_with_open3d(pcd, best_elev, best_azim, distance, H=512, W=512):
     # "Clay" Material setup
     material = o3d.visualization.rendering.MaterialRecord()
     material.shader = "defaultLit"
-    # material.base_color = [1.0, 1.0, 1.0, 1.0]
     material.base_roughness = 0.0
     material.base_metallic = 0.0
+    material.base_color = [1.0, 1.0, 1.0, 1.0]
     # material.point_size = 5.0 
     
-    # 3. Get normals as a numpy array
-    normals = np.asarray(pcd.normals)
-
-    # 4. Normalize or transform normals to [0, 1] for RGB
-    # Normals are usually [-1, 1], so we map to [0, 1] using (n + 1) / 2
-    colors = (normals + 1) / 2
-    # colors = normals
-
-    # 5. Assign colors to the point cloud
-    pcd.colors = o3d.utility.Vector3dVector(colors)
+   
     
     # Create mesh
     distances = pcd.compute_nearest_neighbor_distance()
@@ -221,6 +212,7 @@ from contextlib import nullcontext
     
 def spar3d_full(reference_images,
                 distances,
+                pcds,
                 objects,
                 reduction_count_type="keep",
                 target_count=2000):
@@ -268,6 +260,8 @@ def spar3d_full(reference_images,
                 if "cuda" in device
                 else nullcontext()
             ):
+                
+                
                 # mesh, glob_dict = model.run_image_custom_camera(
                 mesh, glob_dict = model.run_image(
                     image,
@@ -276,6 +270,7 @@ def spar3d_full(reference_images,
                     vertex_count=vertex_count,
                     return_points=True,
                     # NEW STUFF
+                    pointcloud=pcds[i]
                     # fovy_degrees=60.0,
                     # distance=distances[i],
                 )
@@ -408,6 +403,57 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0
 
     return chamfer_dist
 
+def prepare_gt_for_spar3d(gt_pcd, best_elev, best_azim):
+    """
+    Prepares a Ground Truth point cloud to bypass SPAR3D's Step 1.
+    Aligns, normalizes, samples to 512, and formats to [512, 6].
+    """
+    pc_copy = copy.deepcopy(gt_pcd)
+    
+    # --- 1. CENTER ---
+    pc_copy.translate(-pc_copy.get_center())
+    
+    # --- 2. REVERSE CAMERA ANGLES ---
+    # Bring the object to face the camera
+    rad_azim = np.radians(best_azim)
+    R_azim_inv = pc_copy.get_rotation_matrix_from_axis_angle([0, rad_azim, 0])
+    pc_copy.rotate(R_azim_inv, center=(0, 0, 0))
+    
+    rad_elev = np.radians(best_elev)
+    R_elev_inv = pc_copy.get_rotation_matrix_from_axis_angle([-rad_elev, 0, 0])
+    pc_copy.rotate(R_elev_inv, center=(0, 0, 0))
+    
+    # --- 3. SPAR3D INTERNAL SPACE CORRECTION ---
+    # Apply the exact inverse of SPAR3D's output_rotation
+    # Inverse of rotation2: +90 on Y becomes -90 on Y
+    R_y_inv = pc_copy.get_rotation_matrix_from_axis_angle([0, np.radians(-90), 0])
+    pc_copy.rotate(R_y_inv, center=(0, 0, 0))
+
+    # Inverse of rotation1: -90 on X becomes +90 on X
+    R_x_inv = pc_copy.get_rotation_matrix_from_axis_angle([np.radians(90), 0, 0])
+    pc_copy.rotate(R_x_inv, center=(0, 0, 0))
+
+    # --- 4. NORMALIZE TO BOUNDING BOX ---
+    bbox = pc_copy.get_axis_aligned_bounding_box()
+    max_extent = np.max(bbox.get_max_bound() - bbox.get_min_bound())
+    pc_copy.scale(1.0 / max_extent, center=(0, 0, 0))
+
+    # --- 5. DOWNSAMPLE TO EXACTLY 512 POINTS ---
+    # pc_down = pc_copy.farthest_point_down_sample(512)
+    pc_down = pc_copy.farthest_point_down_sample(1024)
+
+    # --- 6. FORMAT INTO [N, 6] ARRAY ---
+    xyz = np.asarray(pc_down.points)
+    
+    rgb = np.full_like(xyz, 1.0) # Uniform grey proxy
+    # rgb = np.asarray(pc_down.colors)
+    
+    
+    pc_tensor_ready = np.concatenate([xyz, rgb], axis=-1)
+    
+    return pc_tensor_ready
+
+
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -449,6 +495,7 @@ if __name__ == "__main__":
 
     reference_images = []
     distances = []
+    pcds = []
     for object in tqdm(objects, desc=f"Processing all objects in {args.dir}"):
         print(f"PROCESSING {object}")
         
@@ -468,7 +515,18 @@ if __name__ == "__main__":
             exit()
         print("RIGHT AFTER")
         
-        partial_pcd.estimate_normals()        
+        partial_pcd.estimate_normals()
+           
+         # 3. Get normals as a numpy array
+        # normals = np.asarray(partial_pcd.normals)
+
+        # 4. Normalize or transform normals to [0, 1] for RGB
+        # Normals are usually [-1, 1], so we map to [0, 1] using (n + 1) / 2
+        # colors = (normals +/ 1) / 2
+        # colors = normals
+
+        # 5. Assign colors to the point cloud
+        # partial_pcd.colors = o3d.utility.Vector3dVector(colors)     
         # best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
 
         best_elev = 8.4979
@@ -476,15 +534,20 @@ if __name__ == "__main__":
         # distance = 1
         distance = 2.0
         
-
         print("GET BEST RGB;")
         canonical_image = get_reference_image(partial_pcd, best_elev, best_azim, distance)
         o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
+        
+        input_pcd = prepare_gt_for_spar3d(partial_pcd, best_elev, best_azim)        
+        
+        
+        
         reference_images.append(canonical_image)
         distances.append(distance)
+        pcds.append(input_pcd)
 
     # exit()
-    spar3d_full(reference_images, distances, objects)
+    spar3d_full(reference_images, distances, pcds, objects)
         
         
     for object in objects:
