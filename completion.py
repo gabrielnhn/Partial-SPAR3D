@@ -77,7 +77,7 @@ def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
             ])
             eye = center + rel_eye
             
-            renderer.setup_camera(MYCHOICEFOV, center, eye, [0, 1, 0])
+            renderer.setup_camera(60.0, center, eye, [0, 1, 0])
             # renderer.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
             
             # Render Depth and Image
@@ -178,9 +178,8 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     render.scene.add_geometry("pcd", pcd, material)
     render.scene.set_background([0, 0, 1, 1]) 
     
-    # setup_camera(fov, center, eye, up)
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(MYCHOICEFOV, center, eye, [0, 1, 0])
+    render.setup_camera(60.0, center, eye, [0, 1, 0])
     # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
@@ -391,6 +390,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--file", default=None)
 parser.add_argument("--dir", default=None)
 parser.add_argument("--fov", type=float, default=SPAR3D_FOVY_DEG)
+parser.add_argument("--distance", type=float, default=SPAR3D_DISTANCE)
 args = parser.parse_args()
 MYCHOICEFOV = args.fov
 
@@ -404,7 +404,8 @@ if __name__ == "__main__":
     
     objects = []
     if not args.file and not args.dir:
-        object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
+        # object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
+        object = os.path.join(dataset_path, "gtdata", input("object: ")+".ply")
         objects.append(object)
 
     else:

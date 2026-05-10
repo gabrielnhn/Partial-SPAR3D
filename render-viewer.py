@@ -2,8 +2,9 @@ import open3d as o3d
 import numpy as np
 
 # Set to your SPAR3D params
-# SPAR3D_FOVY_DEG = 33.898
-SPAR3D_FOVY_DEG = 60
+SPAR3D_FOVY_DEG = 33.898
+# SPAR3D_FOVY_DEG = 60
+# SPAR3D_FOVY_DEG = 45
 
 def interactive_angle_finder(pcd_path):
     print(f"Loading {pcd_path}...")
@@ -24,7 +25,7 @@ def interactive_angle_finder(pcd_path):
     # Match your material settings
     opt = vis.get_render_option()
     opt.background_color = np.asarray([0.0, 0.0, 1.0]) # Your blue background
-    opt.point_size = 5.0 # Fat points
+    opt.point_size = 5.0
     opt.light_on = True
 
     vis.add_geometry(pcd)
@@ -34,7 +35,6 @@ def interactive_angle_finder(pcd_path):
     current_fov = ctr.get_field_of_view()
     ctr.change_field_of_view(step=(SPAR3D_FOVY_DEG - current_fov))
 
-    # --- THE MAGIC REVERSE-MATH FUNCTION ---
     def capture_angle(vis):
         ctr = vis.get_view_control()
         cam_params = ctr.convert_to_pinhole_camera_parameters()
@@ -80,9 +80,14 @@ def interactive_angle_finder(pcd_path):
     vis.destroy_window()
 
 if __name__ == "__main__":
-    # Point this to one of your messed up objects
     dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata"
-    object_file = "cow.ply" # or stanford-bunny.ply
-    
+    object_file = "cow.ply"
     full_path = f"{dataset_path}/{object_file}"
-    interactive_angle_finder(full_path)
+    # interactive_angle_finder(full_path)
+    
+    
+    dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/redwood/indata"
+    import os
+    for object_file in os.listdir(dataset_path):
+        full_path = f"{dataset_path}/{object_file}"
+        interactive_angle_finder(full_path)
