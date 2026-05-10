@@ -440,7 +440,7 @@ def prepare_gt_for_spar3d(gt_pcd, best_elev, best_azim):
 
     # --- 5. DOWNSAMPLE TO EXACTLY 512 POINTS ---
     # pc_down = pc_copy.farthest_point_down_sample(512)
-    pc_down = pc_copy.farthest_point_down_sample(1024)
+    pc_down = pc_copy
 
     # --- 6. FORMAT INTO [N, 6] ARRAY ---
     xyz = np.asarray(pc_down.points)
