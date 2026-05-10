@@ -29,6 +29,25 @@ SPAR3D_FOVY_DEG = np.rad2deg(SPAR3D_FOVY_RAD)
 SPAR3D_DISTANCE = 2.2
 
 
+def downsample(pcd, target_num_points = 16384):
+
+    total_points = len(pcd.points)
+
+    if total_points >= target_num_points:
+        # Generate 16,384 unique random indices
+        # replace=False ensures we don't pick the same point twice
+        random_indices = np.random.choice(total_points, target_num_points, replace=False)
+        
+        # Create a new point cloud using only those selected indices
+        sampled_pcd = pcd.select_by_index(random_indices)
+        
+        print(f"Sampled exactly {len(sampled_pcd.points)} points.")
+    else:
+        print(f"Warning: The point cloud only has {total_points} points, which is less than {target_num_points}.")
+        # Depending on your needs, you might want to pad it, use 'replace=True', or just use the original cloud
+    return sampled_pcd
+
+
 def get_canonical_angles(pcd, pose_w=0.5, contour_w=0.2, area_w=1.0):
     W = H = 512
     renderer = o3d.visualization.rendering.OffscreenRenderer(W, H)
@@ -314,8 +333,12 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0
     # print("brute-force search over SO(3) [13,824 rotations]...")
     
     # Downsample for extreme speed during the brute-force phase (1000 points is plenty for rough alignment)
-    src_down = pred_norm.random_down_sample(1000 / len(pred_norm.points))
-    tgt_down = gt_norm.random_down_sample(1000 / len(gt_norm.points))
+    # src_down = pred_norm.random_down_sample(1000 / len(pred_norm.points))
+    # tgt_down = gt_norm.random_down_sample(1000 / len(gt_norm.points))
+    src_down = downsample(pred_norm, 1000)
+    tgt_down = downsample(gt_norm, 1000)
+
+    # tgt_down = gt_norm.random_down_sample(num_samples)
     
     src_pts = np.asarray(src_down.points)
     tgt_pts = np.asarray(tgt_down.points)
@@ -559,6 +582,5 @@ if __name__ == "__main__":
         brute_force_align_and_eval(
             mesh_path=raw_mesh_path,
             gt_pcd_path=gt_path,
-            num_samples=10000, 
             d_th=0.05 
         )
