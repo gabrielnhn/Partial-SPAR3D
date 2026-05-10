@@ -170,13 +170,24 @@ def render_with_open3d(pcd, best_elev, best_azim, distance, H=512, W=512):
     # "Clay" Material setup
     material = o3d.visualization.rendering.MaterialRecord()
     material.shader = "defaultLit"
-    material.base_color = [0.7, 0.7, 0.7, 1.0]
-    material.base_roughness = 0.5
+    # material.base_color = [1.0, 1.0, 1.0, 1.0]
+    material.base_roughness = 0.0
     material.base_metallic = 0.0
-    material.point_size = 5.0  # Adjust this float for thickness
+    material.point_size = 2.2 
+    
+    # 3. Get normals as a numpy array
+    normals = np.asarray(pcd.normals)
+
+    # 4. Normalize or transform normals to [0, 1] for RGB
+    # Normals are usually [-1, 1], so we map to [0, 1] using (n + 1) / 2
+    colors = (normals + 1) / 2
+    # colors = normals
+
+    # 5. Assign colors to the point cloud
+    pcd.colors = o3d.utility.Vector3dVector(colors)
     
     render.scene.add_geometry("pcd", pcd, material)
-    render.scene.set_background([0, 0, 1, 1]) 
+    render.scene.set_background([0, 0, 0, 1]) 
     
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
     render.setup_camera(60.0, center, eye, [0, 1, 0])
