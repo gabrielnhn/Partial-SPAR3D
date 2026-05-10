@@ -140,14 +140,14 @@ import open3d as o3d
 import numpy as np
 import torch
 
-def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
+def render_with_open3d(pcd, best_elev, best_azim, distance, H=512, W=512):
     
     center = pcd.get_center()
     bbox = pcd.get_axis_aligned_bounding_box()
     extent = bbox.get_max_bound() - bbox.get_min_bound()
     # distance = np.linalg.norm(extent) * 1.5
     # distance = np.sqrt(((extent) ** 2).sum()) * 0.65
-    distance = np.sqrt(((extent) ** 2).sum()) * 0.8
+    # distance = np.sqrt(((extent) ** 2).sum()) * 0.82
     # distance = SPAR3D_DISTANCE
     
     e = np.radians(best_elev)
@@ -187,9 +187,9 @@ def render_with_open3d(pcd, best_elev, best_azim, H=512, W=512):
     
     return image, depth
 
-def get_reference_image(pcd, best_elev, best_azim):
+def get_reference_image(pcd, best_elev, best_azim, distance):
     print("Rendering PyTorch3D Reference Image and Depth...")
-    img, depth = render_with_open3d(pcd, best_elev, best_azim)
+    img, depth = render_with_open3d(pcd, best_elev, best_azim, distance)
     return img
     
 from spar3d.system import SPAR3D
@@ -198,6 +198,7 @@ from spar3d.utils import foreground_crop, remove_background
 from contextlib import nullcontext
     
 def spar3d_full(reference_images,
+                distances,
                 objects,
                 reduction_count_type="keep",
                 target_count=2000):
@@ -245,6 +246,7 @@ def spar3d_full(reference_images,
                 if "cuda" in device
                 else nullcontext()
             ):
+                # mesh, glob_dict = model.run_image_custom_camera(
                 mesh, glob_dict = model.run_image(
                     image,
                     bake_resolution=512,
@@ -252,8 +254,8 @@ def spar3d_full(reference_images,
                     vertex_count=vertex_count,
                     return_points=True,
                     # NEW STUFF
-                    # custom_distance=distances[i],
-                    # custom_fovy_deg=60,
+                    # fovy_degrees=60.0,
+                    # distance=distances[i],
                 )
         print("Peak Memory:", torch.cuda.max_memory_allocated() / 1024 / 1024, "MB")
 
@@ -404,8 +406,8 @@ if __name__ == "__main__":
     
     objects = []
     if not args.file and not args.dir:
-        # object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
-        object = os.path.join(dataset_path, "gtdata", input("object: ")+".ply")
+        object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
+        # object = os.path.join(dataset_path, "gtdata", input("object: ")+".ply")
         objects.append(object)
 
     else:
@@ -424,6 +426,7 @@ if __name__ == "__main__":
             print("bruh give me a point cloud kom op")
 
     reference_images = []
+    distances = []
     for object in tqdm(objects, desc=f"Processing all objects in {args.dir}"):
         print(f"PROCESSING {object}")
         
@@ -444,15 +447,21 @@ if __name__ == "__main__":
         print("RIGHT AFTER")
         
         partial_pcd.estimate_normals()        
-        best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
+        # best_elev, best_azim, distance = get_canonical_angles(partial_pcd)
+
+        best_elev = 8.4979
+        best_azim = 0.2060
+        distance = 1
+        
 
         print("GET BEST RGB;")
-        canonical_image = get_reference_image(partial_pcd, best_elev, best_azim)
+        canonical_image = get_reference_image(partial_pcd, best_elev, best_azim, distance)
         o3d.io.write_image(os.path.join(renders_dir, "RENDER-pre.png"), canonical_image)
         reference_images.append(canonical_image)
+        distances.append(distance)
 
     # exit()
-    spar3d_full(reference_images, objects)
+    spar3d_full(reference_images, distances, objects)
         
         
     for object in objects:

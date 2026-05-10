@@ -602,7 +602,7 @@ class SPAR3D(BaseModule):
             .repeat(batch_size, 1, 1, 1),
         }
 
-        meshes, global_dict = self.generate_mesh(
+        meshes, global_dict = self.generate_mesh_colourless(
             batch,
             bake_resolution,
             pointcloud,
@@ -649,6 +649,213 @@ class SPAR3D(BaseModule):
         )
 
         return mask_cond, rgb_cond
+    
+    
+    
+    def run_image_custom_camera(
+        self,
+        image: Union[Image.Image, List[Image.Image]],
+        bake_resolution: int,
+        pointcloud: Optional[Union[List[np.ndarray], np.ndarray, Tensor]] = None,
+        remesh: Literal["none", "triangle", "quad"] = "none",
+        vertex_count: int = -1,
+        estimate_illumination: bool = False,
+        return_points: bool = False,
+        fovy_degrees = 60.0,
+        distance = 2.2,
+    ) -> Tuple[Union[trimesh.Trimesh, List[trimesh.Trimesh]], dict[str, Any]]:
+        if isinstance(image, list):
+            rgb_cond = []
+            mask_cond = []
+            for img in image:
+                mask, rgb = self.prepare_image(img)
+                mask_cond.append(mask)
+                rgb_cond.append(rgb)
+            rgb_cond = torch.stack(rgb_cond, 0)
+            mask_cond = torch.stack(mask_cond, 0)
+            batch_size = rgb_cond.shape[0]
+        else:
+            mask_cond, rgb_cond = self.prepare_image(image)
+            batch_size = 1
+
+        # c2w_cond = default_cond_c2w(self.cfg.default_distance).to(self.device)
+        c2w_cond = default_cond_c2w(distance).to(self.device)
+        
+        intrinsic, intrinsic_normed_cond = create_intrinsic_from_fov_rad(
+            # self.cfg.default_fovy_rad,
+            np.deg2rad(fovy_degrees),
+            self.cfg.cond_image_size,
+            self.cfg.cond_image_size,
+        )
+
+        batch = {
+            "rgb_cond": rgb_cond,
+            "mask_cond": mask_cond,
+            "c2w_cond": c2w_cond.view(1, 1, 4, 4).repeat(batch_size, 1, 1, 1),
+            "intrinsic_cond": intrinsic.to(self.device)
+            .view(1, 1, 3, 3)
+            .repeat(batch_size, 1, 1, 1),
+            "intrinsic_normed_cond": intrinsic_normed_cond.to(self.device)
+            .view(1, 1, 3, 3)
+            .repeat(batch_size, 1, 1, 1),
+        }
+
+        meshes, global_dict = self.generate_mesh_colourless(
+            batch,
+            bake_resolution,
+            pointcloud,
+            remesh,
+            vertex_count,
+            estimate_illumination,
+        )
+
+        if return_points:
+            point_clouds = []
+            for i in range(batch_size):
+                xyz = batch["pc_cond"][i, :, :3].cpu().numpy()
+                color_rgb = (
+                    (batch["pc_cond"][i, :, 3:6] * 255).cpu().numpy().astype(np.uint8)
+                )
+                pc_trimesh = trimesh.PointCloud(vertices=xyz, colors=color_rgb)
+                point_clouds.append(pc_trimesh)
+            global_dict["point_clouds"] = point_clouds
+
+        if batch_size == 1:
+            return meshes[0], global_dict
+        else:
+            return meshes, global_dict
+    
+    
+    def generate_mesh_colourless(
+        self,
+        batch,
+        bake_resolution: int,  # No longer used, but kept for signature compatibility
+        pointcloud: Optional[Union[List[float], np.ndarray, Tensor]] = None,
+        remesh: Literal["none", "triangle", "quad"] = "none",
+        vertex_count: int = -1,
+        estimate_illumination: bool = False, # No longer used
+    ) -> Tuple[List[trimesh.Trimesh], dict[str, Any]]:
+        
+        batch["rgb_cond"] = self.image_processor(
+            batch["rgb_cond"], self.cfg.cond_image_size
+        )
+        batch["mask_cond"] = self.image_processor(
+            batch["mask_cond"], self.cfg.cond_image_size
+        )
+
+        device = get_device()
+        batch_size = batch["rgb_cond"].shape[0]
+
+        # --- 1. POINT CLOUD CONDITIONING ---
+        if pointcloud is not None:
+            if isinstance(pointcloud, list):
+                cond_tensor = torch.tensor(pointcloud).float().to(device).view(-1, 6)
+                xyz = cond_tensor[:, :3]
+                color_rgb = cond_tensor[:, 3:]
+            elif isinstance(pointcloud, np.ndarray):
+                xyz = torch.tensor(pointcloud[:, :3]).float().to(device)
+                color_rgb = torch.tensor(pointcloud[:, 3:]).float().to(device)
+            else:
+                raise ValueError("Invalid point cloud type")
+
+            pointcloud = torch.cat([xyz, color_rgb], dim=-1).unsqueeze(0)
+            batch["pc_cond"] = pointcloud
+
+        # --- 2. DIFFUSION (STEP 1) ---
+        if "pc_cond" not in batch:
+            cond_tokens = self.forward_pdiff_cond(batch)
+            sample_iter = self.sampler.sample_batch_progressive(
+                batch_size, cond_tokens, device=self.device
+            )
+            for x in sample_iter:
+                samples = x["xstart"]
+
+            denoised_pc = samples.permute(0, 2, 1).float()  # [B, C, N] -> [B, N, C]
+            denoised_pc = normalize_pc_bbox(denoised_pc)
+            batch["pc_cond"] = denoised_pc
+
+        # --- 3. TRIPLANE GENERATION (STEP 2) ---
+        scene_codes, non_postprocessed_codes = self.get_scene_codes(batch)
+
+        # Create a rotation matrix for the final output domain
+        rotation = trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0])
+        rotation2 = trimesh.transformations.rotation_matrix(np.radians(90), [0, 1, 0])
+        output_rotation = rotation2 @ rotation
+
+        global_dict = {}
+        
+        # Memory management
+        if self.is_low_vram:
+            self._unload_pdiff_modules()
+            self._unload_main_modules()
+            self._load_estimator_modules()
+
+        # We keep the pointcloud in the dict for your Test-Time Optimization!
+        global_dict["pointcloud"] = batch["pc_cond"]
+
+        device = get_device()
+        
+        # --- 4. GEOMETRY EXTRACTION ---
+        with torch.no_grad():
+            with (
+                torch.autocast(device_type=device, enabled=False)
+                if "cuda" in device
+                else nullcontext()
+            ):
+                # Extract raw mesh (DMTet / Marching Cubes)
+                meshes = self.triplane_to_meshes(scene_codes)
+
+                rets = []
+                for i, mesh in enumerate(meshes):
+                    # Check for empty mesh
+                    if mesh.v_pos.shape[0] == 0:
+                        rets.append(trimesh.Trimesh())
+                        continue
+
+                    # Apply geometry smoothing/remeshing if requested
+                    if remesh == "triangle":
+                        mesh = mesh.triangle_remesh(triangle_vertex_count=vertex_count)
+                    elif remesh == "quad":
+                        mesh = mesh.quad_remesh(quad_vertex_count=vertex_count)
+                    else:
+                        if vertex_count > 0:
+                            print("Warning: vertex_count is ignored when remesh is none")
+
+                    if remesh != "none":
+                        print(f"After {remesh} remesh the mesh has {mesh.v_pos.shape[0]} verts and {mesh.t_pos_idx.shape[0]} faces")
+
+                    # --- GEOMETRY ONLY: Bypassing all Texture / UV / Shader logic ---
+                    verts_np = convert_data(mesh.v_pos)
+                    faces = convert_data(mesh.t_pos_idx)
+
+                    # Create a "naked" Trimesh without materials or UVs
+                    tmesh = trimesh.Trimesh(
+                        vertices=verts_np,
+                        faces=faces
+                    )
+                    
+                    # Apply canonical rotations
+                    tmesh.apply_transform(output_rotation)
+                    tmesh.invert()
+
+                    rets.append(tmesh)
+
+        return rets, global_dict
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 
     def generate_mesh(
         self,
