@@ -173,7 +173,7 @@ def render_with_open3d(pcd, best_elev, best_azim, distance, H=512, W=512):
     # material.base_color = [1.0, 1.0, 1.0, 1.0]
     material.base_roughness = 0.0
     material.base_metallic = 0.0
-    material.point_size = 2.2 
+    # material.point_size = 5.0 
     
     # 3. Get normals as a numpy array
     normals = np.asarray(pcd.normals)
@@ -186,12 +186,23 @@ def render_with_open3d(pcd, best_elev, best_azim, distance, H=512, W=512):
     # 5. Assign colors to the point cloud
     pcd.colors = o3d.utility.Vector3dVector(colors)
     
-    render.scene.add_geometry("pcd", pcd, material)
+    # Create mesh
+    distances = pcd.compute_nearest_neighbor_distance()
+    avg_dist = np.mean(distances)
+    radius = 3 * avg_dist
+    bpa_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+        pcd, o3d.utility.DoubleVector([radius, radius * 2])
+    )
+    # # Optional: Simplify the mesh
+    # bpa_mesh = bpa_mesh.simplify_quadric_decimation(100000)
+    
+    
+    render.scene.add_geometry("pcd", bpa_mesh, material)
     render.scene.set_background([0, 0, 0, 1]) 
     
     # In PyTorch3D look_at, the default 'up' is (0, 1, 0)
-    render.setup_camera(60.0, center, eye, [0, 1, 0])
-    # render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
+    # render.setup_camera(60.0, center, eye, [0, 1, 0])
+    render.setup_camera(SPAR3D_FOVY_DEG, center, eye, [0, 1, 0])
     
     image = render.render_to_image()
     depth = render.render_to_depth_image(z_in_view_space=True)
@@ -417,8 +428,8 @@ if __name__ == "__main__":
     
     objects = []
     if not args.file and not args.dir:
-        object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
-        # object = os.path.join(dataset_path, "gtdata", input("object: ")+".ply")
+        # object = os.path.join(dataset_path, "indata", input("object: ")+".ply")
+        object = os.path.join(dataset_path, "gtdata", input("object: ")+".ply")
         objects.append(object)
 
     else:
@@ -462,7 +473,8 @@ if __name__ == "__main__":
 
         best_elev = 8.4979
         best_azim = 0.2060
-        distance = 1
+        # distance = 1
+        distance = 2.0
         
 
         print("GET BEST RGB;")

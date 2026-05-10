@@ -111,7 +111,8 @@ class SPAR3D(BaseModule):
         var_type: str = "fixed_small"
         diffu_sched: str = "cosine"
         diffu_sched_exp: float = 12.0
-        guidance_scale: float = 3.0
+        # guidance_scale: float = 3.0
+        guidance_scale: float = 1.0
         sigma_max: float = 120.0
         s_churn: float = 3.0
 

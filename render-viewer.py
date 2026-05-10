@@ -2,8 +2,8 @@ import open3d as o3d
 import numpy as np
 
 # Set to your SPAR3D params
-# SPAR3D_FOVY_DEG = 33.898
-SPAR3D_FOVY_DEG = 60
+SPAR3D_FOVY_DEG = 33.898
+# SPAR3D_FOVY_DEG = 60
 # SPAR3D_FOVY_DEG = 45
 
 def interactive_angle_finder(pcd_path):
@@ -80,7 +80,7 @@ def interactive_angle_finder(pcd_path):
     vis.destroy_window()
 
 if __name__ == "__main__":
-    dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/indata"
+    dataset_path = "/home/gabrielnhn/datasets/synthetic_redwood/upload/plyobj/gtdata"
     object_file = "cow.ply"
     full_path = f"{dataset_path}/{object_file}"
     interactive_angle_finder(full_path)
