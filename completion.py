@@ -242,6 +242,15 @@ def spar3d_full(reference_images,
         weight_name="model.safetensors",
         low_vram_mode=True,
     )
+    
+    # model.cfg.isosurface_resolution = 256 # or 320
+    # model.isosurface_helpe.resolution = 256
+    # model.cfg.isosurface_threshold = 10.0
+    # model.cfg.isosurface_threshold = 5.0
+    model.cfg.isosurface_threshold = 12.0
+    model.configure()
+    
+    
     model.to(device)
     model.eval()
 

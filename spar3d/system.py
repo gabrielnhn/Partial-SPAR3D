@@ -223,6 +223,8 @@ class SPAR3D(BaseModule):
                 dtype=torch.float32,
             ),
         )
+        
+        print("ISOSURFACE RES IS", self.cfg.isosurface_resolution)
         self.isosurface_helper = MarchingTetrahedraHelper(
             self.cfg.isosurface_resolution,
             os.path.join(
