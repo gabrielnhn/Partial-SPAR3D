@@ -15,11 +15,11 @@ def debug_viewer(object_name, base_dataset_path, renders_dir):
 
     geometries = []
 
-    # mesh = o3d.io.read_triangle_mesh(unaligned_mesh_path)
-    mesh = o3d.io.read_triangle_mesh(aligned_mesh_path)
+    mesh = o3d.io.read_triangle_mesh(unaligned_mesh_path)
+    # mesh = o3d.io.read_triangle_mesh(aligned_mesh_path)
     mesh.compute_vertex_normals()
-    mesh.paint_uniform_color([0.7, 0.7, 0.7]) 
-    # geometries.append(mesh)
+    mesh.paint_uniform_color([0.0, 0.5, 0]) 
+    geometries.append(mesh)
     print(f"Loaded Aligned Mesh: {aligned_mesh_path}")
 
     # pcd_partial = o3d.io.read_point_cloud(partial_path)

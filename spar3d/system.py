@@ -58,7 +58,7 @@ class SPAR3D(BaseModule):
         cond_image_size: int
         isosurface_resolution: int
         isosurface_threshold: float = 10.0
-        # isosurface_threshold: float = -10.0
+        # isosurface_threshold: float = 25.0
         radius: float = 1.0
         background_color: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.5])
         default_fovy_rad: float = 0.591627
@@ -112,8 +112,8 @@ class SPAR3D(BaseModule):
         var_type: str = "fixed_small"
         diffu_sched: str = "cosine"
         diffu_sched_exp: float = 12.0
-        # guidance_scale: float = 3.0
-        guidance_scale: float = 1.0
+        guidance_scale: float = 5.0
+        # guidance_scale: float = 1.0
         sigma_max: float = 120.0
         s_churn: float = 3.0
 

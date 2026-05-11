@@ -377,16 +377,21 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0
     print(f"   -> Found optimal initial rotation.")
 
     # Apply the best rotation to our normalized dense prediction
-    pred_norm.rotate(best_R, center=(0,0,0))
+    pred_norm.rotate(best_R, center=(0,0,0))    
 
     print("Refining with ICP")
     threshold = 0.05
+    # threshold = 0.1
     trans_init = np.eye(4)
+    
+    # pred_norm.estimate_normals()
+    # gt_norm.estimate_normals()
     
     reg_p2p = o3d.pipelines.registration.registration_icp(
         pred_norm, gt_norm, threshold, trans_init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=500)
+        # o3d.pipelines.registration.TransformationEstimationPointToPlane()
     )
     
     pred_norm.transform(reg_p2p.transformation)
@@ -411,7 +416,7 @@ def brute_force_align_and_eval(mesh_path, gt_pcd_path, num_samples=16384, d_th=0
     mean_dist_m_to_gt = np.mean(dists_m_to_gt)
     mean_dist_gt_to_m = np.mean(dists_gt_to_m)
     
-    chamfer_dist = mean_dist_m_to_gt + mean_dist_gt_to_m
+    chamfer_dist = (mean_dist_m_to_gt + mean_dist_gt_to_m) * 50
     
     # precision = np.mean(dists_m_to_gt < d_th) * 100
     # recall = np.mean(dists_gt_to_m < d_th) * 100    
